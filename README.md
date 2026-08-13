@@ -89,8 +89,26 @@ Things that are non-obvious from the code:
 
 ## Deploy
 
+```
+Vercel (defenex-web)          Railway (desirable-simplicity)
+  apps/web                      defenex-worker  [public HTTPS]
+      |                             |  private network
+      +---- HTTPS + shared secret ->+---> Postgres   (never public)
+                                    +---> Redis      (never public)
+```
+
 - **Vercel** → root directory `apps/web`. Commercial use requires the Pro plan.
-- **Railway** → Postgres + Redis + a service built from `apps/worker/Dockerfile`.
-  Use the private (`.railway.internal`) URLs for `DATABASE_URL` and `REDIS_URL`.
-- Run migrations as an explicit deploy step, never from app startup — concurrent
-  replicas racing the same migration corrupts state.
+  It holds only `WORKER_API_URL`, `WORKER_API_SECRET` and `NEXT_PUBLIC_APP_URL`.
+- **Railway** → Postgres + Redis + a worker built from `apps/worker/Dockerfile`,
+  configured by `railway.json`. The databases keep private
+  (`.railway.internal`) URLs, which Vercel cannot resolve by design.
+- **The web app never talks to Postgres or Redis directly.** It calls the worker
+  over HTTPS with a shared secret. This keeps both databases off the public
+  internet and avoids serverless connection-pool exhaustion, since only the
+  long-lived worker holds a pool.
+- Migrations run as `preDeployCommand` in `railway.json` — never from app
+  startup, where concurrent replicas would race the same migration.
+
+**Do not enable Railway's Vercel variable sync.** It mirrors every Railway
+variable into Vercel, including database passwords and the YepAPI, Gemini and
+Apify keys, none of which the web app needs.
