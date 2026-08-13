@@ -214,6 +214,10 @@ export function createApi(): Hono {
         html,
       });
       if (error) logger.error({ err: error.message }, "magic link send failed");
+      // Logged on success too: the endpoint always answers ok:true to avoid
+      // leaking whether an account exists, so without this a broken mail
+      // pipeline is indistinguishable from a working one.
+      else logger.info({ domain: env.RESEND_FROM_DOMAIN }, "magic link sent");
     } else {
       logger.warn("RESEND_API_KEY not set; magic link not sent");
     }
