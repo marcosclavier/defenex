@@ -17,7 +17,17 @@ import { parseArgs } from "node:util";
 
 process.loadEnvFile(new URL("../.env", import.meta.url).pathname);
 
-const KEY = process.env.STRIPE_SECRET_KEY ?? process.env.STRIPE_API_KEY ?? "";
+/**
+ * Key selection. `--test` forces the test-mode key so the catalogue can be
+ * built in both modes from one script; price ids differ per mode, so the app
+ * needs a separate set for preview/development.
+ */
+function pickKey(useTest: boolean): string {
+  if (useTest) return process.env.STRIPE_TEST_API_KEY ?? process.env.STRIPE_TEST_SECRET_KEY ?? "";
+  return process.env.STRIPE_SECRET_KEY ?? process.env.STRIPE_API_KEY ?? "";
+}
+
+let KEY = "";
 const API = "https://api.stripe.com/v1";
 
 interface Plan {
@@ -126,10 +136,19 @@ function remember(product: StripeProduct, slug: string): void {
 }
 
 async function main() {
-  const { values } = parseArgs({ options: { apply: { type: "boolean", default: false } } });
+  const { values } = parseArgs({
+    options: { apply: { type: "boolean", default: false }, test: { type: "boolean", default: false } },
+  });
   const apply = values.apply === true;
+  KEY = pickKey(values.test === true);
 
-  if (!KEY) throw new Error("No Stripe key. Set STRIPE_SECRET_KEY or STRIPE_API_KEY.");
+  if (!KEY) {
+    throw new Error(
+      values.test
+        ? "No test key. Set STRIPE_TEST_API_KEY."
+        : "No Stripe key. Set STRIPE_SECRET_KEY or STRIPE_API_KEY.",
+    );
+  }
   const mode = KEY.includes("_live_") ? "LIVE" : "TEST";
   console.log(`Stripe mode: ${mode}${apply ? "" : "   (dry run — pass --apply to write)"}`);
   if (mode === "LIVE" && apply) {

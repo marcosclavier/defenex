@@ -109,6 +109,12 @@ Vercel (defenex-web)          Railway (desirable-simplicity)
 - Migrations run as `preDeployCommand` in `railway.json` — never from app
   startup, where concurrent replicas would race the same migration.
 
+**Billing.** `pnpm stripe:setup` builds the catalogue; `--test` targets test mode
+and `--apply` writes. Price ids differ per mode, so Vercel production carries the
+live ids and preview/development carry the test ids. Lookup is keyed on a
+`defenex_plan` metadata field, not on product name, because this Stripe account
+also serves helloranked and PureStudio.
+
 **Do not enable Railway's Vercel variable sync.** It mirrors every Railway
 variable into Vercel, including database passwords and the YepAPI, Gemini and
 Apify keys, none of which the web app needs.
