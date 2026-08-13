@@ -5,8 +5,14 @@ import { eq } from "drizzle-orm";
 import { ScanInput } from "@defenex/shared";
 import { severityLabel } from "@defenex/core";
 import {
-  brands, createScan, getDb, getReportByScanId, getReportByToken, getScan, listFindings, upsertBrand,
+  brands, claimBrand, claimStripeEvent, countOpenFindings, createScan, getCustomer, getDb,
+  getReportByScanId, getReportByToken, getScan, listBrandsForUser, listFindings,
+  listScansForBrand, upsertBrand, upsertCustomer,
 } from "@defenex/db";
+import { render } from "@react-email/render";
+import { MagicLink } from "@defenex/emails";
+import { Resend } from "resend";
+import { createAuth } from "./auth.js";
 import { env } from "./env.js";
 import { logger } from "./logger.js";
 import { redisClient, scanQueue } from "./queues.js";
@@ -22,9 +28,12 @@ function secretMatches(candidate: string): boolean {
   return timingSafeEqual(a, b);
 }
 
+const resend = env.RESEND_API_KEY ? new Resend(env.RESEND_API_KEY) : null;
+
 export function createApi(): Hono {
   const app = new Hono();
   const checkRateLimit = createRateLimiter(redisClient);
+  const auth = createAuth(redisClient);
 
   // Public: reports only that the process is alive. Deliberately reveals
   // nothing about databases or queues — a health check that fails on a
@@ -172,6 +181,147 @@ export function createApi(): Hono {
       scan: { id: scan.id, finishedAt: scan.finishedAt, resultsSeen: scan.resultsSeen },
       findings,
     });
+  });
+
+  // ------------------------------------------------------------ accounts
+
+  api.post("/auth/request", async (c) => {
+    const body = await c.req.json().catch(() => null);
+    const parsed = z.object({ email: z.email(), callbackUrl: z.string().optional() }).safeParse(body);
+    // Always report success: a different answer for known and unknown
+    // addresses turns this endpoint into an account-enumeration oracle.
+    if (!parsed.success) return c.json({ ok: true });
+
+    const email = parsed.data.email.toLowerCase().trim();
+    const ip = c.req.header("x-client-ip") ?? "unknown";
+    const throttleKey = `auth-throttle-${email}`;
+    const attempts = await redisClient.incr(throttleKey);
+    if (attempts === 1) await redisClient.expire(throttleKey, 15 * 60);
+    if (attempts > 5) {
+      logger.warn({ ip }, "magic link throttled");
+      return c.json({ ok: true });
+    }
+
+    const token = await auth.issue(email);
+    const url = `${env.NEXT_PUBLIC_APP_URL}/login/verify?token=${encodeURIComponent(token)}`;
+
+    if (resend) {
+      const html = await render(MagicLink({ url }));
+      const { error } = await resend.emails.send({
+        from: "Defenex <login@defenex.com>",
+        to: email,
+        subject: "Your Defenex sign-in link",
+        html,
+      });
+      if (error) logger.error({ err: error.message }, "magic link send failed");
+    } else {
+      logger.warn("RESEND_API_KEY not set; magic link not sent");
+    }
+
+    return c.json({ ok: true });
+  });
+
+  api.post("/auth/verify", async (c) => {
+    const body = await c.req.json().catch(() => null);
+    const parsed = z.object({ token: z.string().min(20) }).safeParse(body);
+    if (!parsed.success) return c.json({ error: "invalid_token" }, 400);
+
+    const user = await auth.verify(parsed.data.token);
+    if (!user) return c.json({ error: "invalid_token" }, 401);
+
+    logger.info({ userId: user.id }, "user signed in");
+    return c.json({ user });
+  });
+
+  api.get("/dashboard/:userId", async (c) => {
+    const userId = c.req.param("userId");
+    const owned = await listBrandsForUser(userId);
+
+    const brandsWithState = await Promise.all(
+      owned.map(async (b) => ({
+        id: b.id,
+        name: b.name,
+        domain: b.domain,
+        industry: b.industry,
+        findings: await countOpenFindings(b.id),
+        scans: (await listScansForBrand(b.id, 5)).map((s) => ({
+          id: s.id,
+          status: s.status,
+          findingsCount: s.findingsCount,
+          createdAt: s.createdAt,
+          finishedAt: s.finishedAt,
+        })),
+      })),
+    );
+
+    const customer = await getCustomer(userId);
+    return c.json({
+      brands: brandsWithState,
+      plan: customer?.plan ?? "free",
+      subscription: customer
+        ? {
+            status: customer.status,
+            currentPeriodEnd: customer.currentPeriodEnd,
+            enforcementsIncluded: customer.enforcementsIncluded,
+            enforcementsUsed: customer.enforcementsUsed,
+          }
+        : null,
+    });
+  });
+
+  api.post("/brands/claim", async (c) => {
+    const body = await c.req.json().catch(() => null);
+    const parsed = z.object({ domain: z.string().min(4), userId: z.uuid() }).safeParse(body);
+    if (!parsed.success) return c.json({ error: "invalid_request" }, 400);
+
+    const result = await claimBrand(parsed.data.domain, parsed.data.userId);
+    if (!result.ok) {
+      return c.json({ error: result.reason }, result.reason === "not_found" ? 404 : 409);
+    }
+    logger.info({ userId: parsed.data.userId, domain: parsed.data.domain }, "brand claimed");
+    return c.json({ brand: { id: result.brand.id, name: result.brand.name, domain: result.brand.domain } });
+  });
+
+  api.post("/billing/sync", async (c) => {
+    const parsed = z
+      .object({
+        eventId: z.string().min(1),
+        eventType: z.string().min(1),
+        userId: z.uuid(),
+        stripeCustomerId: z.string().min(1),
+        stripeSubscriptionId: z.string().min(1),
+        plan: z.enum(["free", "monitor", "protect", "managed"]),
+        status: z.string().min(1),
+        currentPeriodEnd: z.string().nullable(),
+        enforcementsIncluded: z.number().int().min(0),
+      })
+      .safeParse(await c.req.json().catch(() => null));
+
+    if (!parsed.success) return c.json({ error: "invalid_request" }, 400);
+    const p = parsed.data;
+
+    // Stripe retries deliveries; without this a retry double-applies.
+    const fresh = await claimStripeEvent(p.eventId, p.eventType);
+    if (!fresh) {
+      logger.info({ eventId: p.eventId }, "stripe event already processed");
+      return c.json({ applied: false });
+    }
+
+    const status = ["active", "trialing", "past_due", "canceled", "incomplete"].includes(p.status)
+      ? (p.status as "active" | "trialing" | "past_due" | "canceled" | "incomplete")
+      : "incomplete";
+
+    await upsertCustomer(p.userId, {
+      stripeCustomerId: p.stripeCustomerId,
+      stripeSubscriptionId: p.stripeSubscriptionId,
+      plan: p.plan,
+      status,
+      currentPeriodEnd: p.currentPeriodEnd ? new Date(p.currentPeriodEnd) : null,
+      enforcementsIncluded: p.enforcementsIncluded,
+    });
+
+    logger.info({ userId: p.userId, plan: p.plan, status }, "billing synced");
+    return c.json({ applied: true });
   });
 
   app.route("/api", api);

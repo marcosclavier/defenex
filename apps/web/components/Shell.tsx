@@ -1,5 +1,13 @@
 import Link from "next/link";
 
+/**
+ * Deliberately does not read the session.
+ *
+ * Reading cookies here would opt every page that renders a header out of static
+ * generation, including the landing page and the legal pages, which are the
+ * same for everyone. "Sign in" therefore shows unconditionally, and /login
+ * redirects an already-authenticated visitor straight to the dashboard.
+ */
 export function Header() {
   return (
     <header className="border-b border-line">
@@ -9,9 +17,9 @@ export function Header() {
           <span className="font-mono text-sm tracking-[0.2em] uppercase">Defenex</span>
         </Link>
         <nav className="flex items-center gap-6 text-sm text-ink-dim">
-          <Link href="/scan" className="transition-colors hover:text-ink">
-            Run a scan
-          </Link>
+          <Link href="/pricing" className="transition-colors hover:text-ink">Pricing</Link>
+          <Link href="/scan" className="transition-colors hover:text-ink">Run a scan</Link>
+          <Link href="/login" className="transition-colors hover:text-ink">Sign in</Link>
         </nav>
       </div>
     </header>

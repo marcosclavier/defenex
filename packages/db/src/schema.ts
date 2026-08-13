@@ -78,6 +78,13 @@ export const consentBasisEnum = pgEnum("consent_basis", [
   "none",
 ]);
 
+/** Mirrors the Stripe catalogue. `free` is the default for a claimed brand. */
+export const planEnum = pgEnum("plan", ["free", "monitor", "protect", "managed"]);
+
+export const subscriptionStatusEnum = pgEnum("subscription_status", [
+  "active", "trialing", "past_due", "canceled", "incomplete",
+]);
+
 export const takedownStatusEnum = pgEnum("takedown_status", [
   "draft",
   "pending_approval",
@@ -258,6 +265,38 @@ export const takedowns = pgTable("takedowns", {
 }, (t) => [index("takedowns_finding_idx").on(t.findingId)]);
 
 // ---------------------------------------------------------------- ops
+
+/**
+ * Billing state, mirrored from Stripe by the webhook. Stripe remains the source
+ * of truth; this exists so entitlement checks do not make a network call on
+ * every request.
+ */
+export const customers = pgTable("customers", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  stripeCustomerId: text("stripe_customer_id"),
+  stripeSubscriptionId: text("stripe_subscription_id"),
+  plan: planEnum("plan").notNull().default("free"),
+  status: subscriptionStatusEnum("status"),
+  currentPeriodEnd: timestamp("current_period_end", { withTimezone: true }),
+  /** Enforcements included per period, and how many are spent. */
+  enforcementsIncluded: integer("enforcements_included").notNull().default(0),
+  enforcementsUsed: integer("enforcements_used").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  uniqueIndex("customers_user_idx").on(t.userId),
+  uniqueIndex("customers_stripe_idx").on(t.stripeCustomerId),
+]);
+
+/**
+ * Processed Stripe events. Stripe retries deliveries, so the webhook must be
+ * idempotent or a retry double-provisions.
+ */
+export const stripeEvents = pgTable("stripe_events", {
+  id: text("id").primaryKey(),
+  type: text("type").notNull(),
+  processedAt: timestamp("processed_at", { withTimezone: true }).notNull().defaultNow(),
+});
 
 /** Daily search-call counter backing the spend circuit breaker. */
 export const searchUsage = pgTable("search_usage", {

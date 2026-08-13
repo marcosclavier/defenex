@@ -99,3 +99,83 @@ export interface ReportPayload {
 export function getReport(token: string) {
   return call<ReportPayload>(`/api/report/${encodeURIComponent(token)}`);
 }
+
+// ------------------------------------------------------------ accounts
+
+export function requestMagicLink(email: string, clientIp: string) {
+  return call<{ ok: true }>("/api/auth/request", {
+    method: "POST",
+    body: JSON.stringify({ email }),
+    headers: { "x-client-ip": clientIp },
+  });
+}
+
+export function verifyMagicLink(token: string) {
+  return call<{ user: { id: string; email: string; isAdmin: boolean } }>("/api/auth/verify", {
+    method: "POST",
+    body: JSON.stringify({ token }),
+  });
+}
+
+export interface DashboardBrand {
+  id: string;
+  name: string;
+  domain: string;
+  industry: string;
+  findings: { total: number; critical: number; high: number };
+  scans: Array<{
+    id: string;
+    status: string;
+    findingsCount: number;
+    createdAt: string;
+    finishedAt: string | null;
+  }>;
+}
+
+export interface DashboardPayload {
+  brands: DashboardBrand[];
+  plan: "free" | "monitor" | "protect" | "managed";
+  subscription: {
+    status: string | null;
+    currentPeriodEnd: string | null;
+    enforcementsIncluded: number;
+    enforcementsUsed: number;
+  } | null;
+}
+
+export function getDashboard(userId: string) {
+  return call<DashboardPayload>(`/api/dashboard/${encodeURIComponent(userId)}`);
+}
+
+export function claimBrand(domain: string, userId: string) {
+  return call<{ brand: { id: string; name: string; domain: string } }>("/api/brands/claim", {
+    method: "POST",
+    body: JSON.stringify({ domain, userId }),
+  });
+}
+
+// ------------------------------------------------------------ billing
+
+export interface BillingSync {
+  eventId: string;
+  eventType: string;
+  userId: string;
+  stripeCustomerId: string;
+  stripeSubscriptionId: string;
+  plan: "free" | "monitor" | "protect" | "managed";
+  status: string;
+  currentPeriodEnd: string | null;
+  enforcementsIncluded: number;
+}
+
+/**
+ * Mirrors Stripe state into Postgres. The webhook runs on Vercel and cannot
+ * reach the database directly, so it goes through the worker like everything
+ * else. The worker deduplicates on eventId, because Stripe retries deliveries.
+ */
+export function syncBilling(payload: BillingSync) {
+  return call<{ applied: boolean }>("/api/billing/sync", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}

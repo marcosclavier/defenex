@@ -15,6 +15,13 @@
       "when": 1786591192379,
       "tag": "0001_strange_random",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786660390002,
+      "tag": "0002_solid_oracle",
+      "breakpoints": true
     }
   ]
 }

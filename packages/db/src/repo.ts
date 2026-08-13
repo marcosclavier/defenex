@@ -1,6 +1,6 @@
 import { and, eq, inArray, lt, sql } from "drizzle-orm";
 import { getDb } from "./client.js";
-import { brands, findings, queryCache, reports, scans, searchUsage } from "./schema.js";
+import { brands, customers, findings, queryCache, reports, scans, searchUsage, stripeEvents, users } from "./schema.js";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -203,4 +203,96 @@ export async function consumeSearchCalls(provider: string, n: number, db: Db = g
       target: [searchUsage.day, searchUsage.provider],
       set: { queries: sql`${searchUsage.queries} + ${n}` },
     });
+}
+
+// ------------------------------------------------------------ accounts
+
+export async function getUserById(userId: string, db: Db = getDb()) {
+  return db.query.users.findFirst({ where: eq(users.id, userId) });
+}
+
+export async function listBrandsForUser(userId: string, db: Db = getDb()) {
+  return db.query.brands.findMany({
+    where: eq(brands.ownerUserId, userId),
+    orderBy: (b, { asc }) => [asc(b.name)],
+  });
+}
+
+export async function listScansForBrand(brandId: string, limit = 10, db: Db = getDb()) {
+  return db.query.scans.findMany({
+    where: eq(scans.brandId, brandId),
+    orderBy: (s, { desc }) => [desc(s.createdAt)],
+    limit,
+  });
+}
+
+export async function countOpenFindings(brandId: string, db: Db = getDb()) {
+  const rows = await db
+    .select({ severity: findings.severity })
+    .from(findings)
+    .where(and(eq(findings.brandId, brandId), inArray(findings.status, ["new", "confirmed", "reappeared"])));
+  return {
+    total: rows.length,
+    critical: rows.filter((r) => r.severity >= 80).length,
+    high: rows.filter((r) => r.severity >= 60 && r.severity < 80).length,
+  };
+}
+
+/**
+ * Attach an unowned brand to a user.
+ *
+ * Deliberately refuses a brand someone else already owns rather than
+ * reassigning it: outbound reports are public-token links, so anyone holding
+ * one could otherwise take over a claimed brand.
+ */
+export async function claimBrand(domain: string, userId: string, db: Db = getDb()) {
+  const brand = await db.query.brands.findFirst({ where: eq(brands.domain, domain.toLowerCase()) });
+  if (!brand) return { ok: false as const, reason: "not_found" as const };
+  if (brand.ownerUserId && brand.ownerUserId !== userId) {
+    return { ok: false as const, reason: "already_claimed" as const };
+  }
+  if (brand.ownerUserId === userId) return { ok: true as const, brand };
+
+  const [updated] = await db
+    .update(brands)
+    .set({ ownerUserId: userId })
+    .where(eq(brands.id, brand.id))
+    .returning();
+  return { ok: true as const, brand: updated! };
+}
+
+export async function getCustomer(userId: string, db: Db = getDb()) {
+  return db.query.customers.findFirst({ where: eq(customers.userId, userId) });
+}
+
+export async function upsertCustomer(
+  userId: string,
+  patch: Partial<typeof customers.$inferInsert>,
+  db: Db = getDb(),
+) {
+  const [row] = await db
+    .insert(customers)
+    .values({ userId, ...patch })
+    .onConflictDoUpdate({ target: customers.userId, set: patch })
+    .returning();
+  return row!;
+}
+
+export async function findCustomerByStripeId(stripeCustomerId: string, db: Db = getDb()) {
+  return db.query.customers.findFirst({
+    where: eq(customers.stripeCustomerId, stripeCustomerId),
+  });
+}
+
+/**
+ * Records a Stripe event id, returning false if it was already handled.
+ * Stripe retries deliveries, so without this a retry double-provisions.
+ */
+export async function claimStripeEvent(id: string, type: string, db: Db = getDb()) {
+  const inserted = await db
+    .insert(stripeEvents)
+    .values({ id, type })
+    .onConflictDoNothing()
+    .returning();
+  return inserted.length > 0;
 }
