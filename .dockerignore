@@ -1,0 +1,25 @@
+# Docker reads .dockerignore from the BUILD CONTEXT ROOT, which for the worker
+# is the repo root (the Dockerfile copies packages/ and apps/worker/).
+# Placing this inside apps/worker/ would silently do nothing.
+node_modules
+**/node_modules
+**/dist
+**/.next
+**/.turbo
+**/.git
+.git
+.github
+.env
+.env.*
+!.env.example
+coverage
+test-results
+playwright-report
+*.log
+scans
+tmp
+# Internal docs are gitignored but would still enter a local build context.
+DEFENEX.md
+BUILD.md
+*.txt
+!requirements.txt
