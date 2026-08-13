@@ -1,40 +1,64 @@
-import { createServer } from "node:http";
+import { serve } from "@hono/node-server";
+import { closeDb } from "@defenex/db";
+import { env } from "./env.js";
+import { logger } from "./logger.js";
+import { createApi } from "./api.js";
+import { closeQueues, startWorkers } from "./queues.js";
+import { processScan } from "./jobs/scan.js";
+import { processReport } from "./jobs/report.js";
+import { closeBrowser } from "./browser.js";
 
-const PORT = Number(process.env.PORT ?? 3001);
+const server = serve({ fetch: createApi().fetch, port: env.PORT }, (info) =>
+  logger.info({ port: info.port }, "worker listening"),
+);
 
-/**
- * Railway health check target. Kept deliberately dumb: it reports that the
- * process is alive, not that downstream services are reachable — a health check
- * that fails on a transient Postgres blip causes restart loops.
- */
-const server = createServer((req, res) => {
-  if (req.url === "/health") {
-    res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ ok: true, uptime: process.uptime() }));
-    return;
-  }
-  res.writeHead(404).end();
-});
-
-server.listen(PORT, () => {
-  console.log(JSON.stringify({ msg: "worker listening", port: PORT }));
-});
+startWorkers({ scan: processScan, report: processReport });
+logger.info(
+  { scanConcurrency: env.SCAN_CONCURRENCY, reportConcurrency: env.REPORT_CONCURRENCY },
+  "queue workers started",
+);
 
 /**
- * Railway sends SIGTERM on redeploy. Stop accepting new work, let in-flight
- * jobs drain, then exit — otherwise a deploy silently kills running scans.
+ * Railway sends SIGTERM on every redeploy.
  *
- * This MUST also close the shared PageFetcher. A `finally` block does not run
- * when a process is signalled: during development, three interrupted scans left
- * eleven orphaned headless-shell processes alive, each holding ~100MB. On a
- * long-lived Railway service that leak compounds across every redeploy until
- * the container OOMs.
+ * Order matters: stop accepting HTTP first, then let in-flight jobs drain, then
+ * close the browser and the database pool. The browser close is the one that
+ * bites if forgotten — a `finally` does not run on a signal, and each leaked
+ * Chromium holds ~100MB, compounding across deploys until the container OOMs.
  */
-async function shutdown(signal: string) {
-  console.log(JSON.stringify({ msg: "shutting down", signal }));
-  server.close();
-  // Stage 3: close BullMQ workers, then `await fetcher.close()`, before exit.
-  process.exit(0);
+let shuttingDown = false;
+
+async function shutdown(signal: NodeJS.Signals): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  logger.info({ signal }, "shutting down");
+
+  const deadline = setTimeout(() => {
+    logger.error("graceful shutdown timed out; forcing exit");
+    process.exit(1);
+  }, 25_000);
+  deadline.unref();
+
+  try {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await closeQueues();
+    await closeBrowser();
+    await closeDb();
+    logger.info("shutdown complete");
+    process.exit(0);
+  } catch (err) {
+    logger.error({ err: String(err) }, "error during shutdown");
+    process.exit(1);
+  }
 }
+
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
 process.on("SIGINT", () => void shutdown("SIGINT"));
+
+process.on("unhandledRejection", (reason) =>
+  logger.error({ reason: String(reason) }, "unhandled rejection"),
+);
+process.on("uncaughtException", (err) => {
+  logger.fatal({ err: err.message, stack: err.stack }, "uncaught exception");
+  void shutdown("SIGTERM");
+});

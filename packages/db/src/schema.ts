@@ -50,6 +50,13 @@ export const findingStatusEnum = pgEnum("finding_status", [
 
 export const confidenceEnum = pgEnum("confidence", ["high", "medium", "low"]);
 
+/**
+ * How the page content was obtained. Only the browser path yields a screenshot,
+ * and a takedown notice needs visual evidence — so stealth-sourced findings must
+ * be re-captured before they can be filed.
+ */
+export const evidenceSourceEnum = pgEnum("evidence_source", ["browser", "stealth"]);
+
 export const emailStatusEnum = pgEnum("email_status", [
   "found",
   "guessed",
@@ -144,6 +151,7 @@ export const findings = pgTable("findings", {
   reasoning: text("reasoning"),
   sourceQuery: text("source_query"),
   screenshotKey: text("screenshot_key"),
+  evidenceSource: evidenceSourceEnum("evidence_source"),
   status: findingStatusEnum("status").notNull().default("new"),
   dismissedReason: text("dismissed_reason"),
   /** Consecutive scans in which this URL was absent; 2 flips status to removed. */
@@ -251,12 +259,13 @@ export const takedowns = pgTable("takedowns", {
 
 // ---------------------------------------------------------------- ops
 
-/** Daily CSE query counter backing the quota circuit breaker. */
-export const cseUsage = pgTable("cse_usage", {
+/** Daily search-call counter backing the spend circuit breaker. */
+export const searchUsage = pgTable("search_usage", {
   id: uuid("id").defaultRandom().primaryKey(),
   day: date("day").notNull(),
+  provider: text("provider").notNull().default("yepapi"),
   queries: integer("queries").notNull().default(0),
-}, (t) => [uniqueIndex("cse_usage_day_idx").on(t.day)]);
+}, (t) => [uniqueIndex("cse_usage_day_idx").on(t.day, t.provider)]);
 
 /** Response cache keyed on sha256(query + params). Cuts cost and rate-limit pressure. */
 export const queryCache = pgTable("query_cache", {

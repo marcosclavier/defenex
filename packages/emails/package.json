@@ -3,15 +3,18 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/index.ts" },
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
     "@defenex/shared": "workspace:*",
-    "@react-email/components": "^0.5.0",
-    "react": "^19.2.0"
+    "@react-email/components": "^1.0.12",
+    "react": "^19.2.0",
+    "@react-email/render": "^2.1.0"
   },
   "devDependencies": {
     "@types/react": "^19.2.0",

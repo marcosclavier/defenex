@@ -1,1 +1,1 @@
-export const EMAILS_VERSION = "0.0.0";
+export { ScanReport, type ScanReportProps, type ReportFinding } from "./ScanReport.js";

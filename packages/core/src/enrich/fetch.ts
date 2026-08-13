@@ -217,6 +217,14 @@ export class PageFetcher {
     return out;
   }
 
+  /**
+   * Expose the shared browser so callers can reuse it for other work (PDF
+   * rendering) instead of launching a second ~300MB process.
+   */
+  async browserHandle(): Promise<Browser> {
+    return this.getBrowser();
+  }
+
   /** Idempotent: signal handlers and normal teardown may both call this. */
   async close(): Promise<void> {
     const browser = this.browser;
