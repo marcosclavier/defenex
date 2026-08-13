@@ -14,6 +14,16 @@ const Env = z.object({
   YEPAPI_API_KEY: z.string().min(1),
   GEMINI_API_KEY: z.string().min(1),
   RESEND_API_KEY: z.string().min(1).optional(),
+  /**
+   * Sending domain for transactional mail. Must be verified in Resend or every
+   * send fails silently from the user's point of view.
+   *
+   * Defaults to defenex.ca because that is what is verified today. defenex.com
+   * was the intended transactional domain, with .ca reserved for cold outreach
+   * so that outreach complaints could never poison report delivery. Verify
+   * defenex.com in Resend and set this to it to restore that separation.
+   */
+  RESEND_FROM_DOMAIN: z.string().default("defenex.ca"),
 
   // Shared secret with the Vercel app. Without it the API is unauthenticated,
   // so the server refuses to start rather than exposing an open endpoint.

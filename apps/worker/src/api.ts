@@ -208,7 +208,7 @@ export function createApi(): Hono {
     if (resend) {
       const html = await render(MagicLink({ url }));
       const { error } = await resend.emails.send({
-        from: "Defenex <login@defenex.com>",
+        from: `Defenex <login@${env.RESEND_FROM_DOMAIN}>`,
         to: email,
         subject: "Your Defenex sign-in link",
         html,

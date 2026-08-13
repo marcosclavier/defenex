@@ -92,7 +92,7 @@ export async function processReport(job: Job<ReportJobData>): Promise<void> {
       : `Brand scan complete: no infringements found for ${brand.name}`;
 
   const { error } = await resend.emails.send({
-    from: "Defenex <reports@defenex.com>",
+    from: `Defenex <reports@${env.RESEND_FROM_DOMAIN}>`,
     to: recipient,
     subject,
     html,
