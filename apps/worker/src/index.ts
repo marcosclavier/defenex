@@ -23,11 +23,17 @@ server.listen(PORT, () => {
 /**
  * Railway sends SIGTERM on redeploy. Stop accepting new work, let in-flight
  * jobs drain, then exit — otherwise a deploy silently kills running scans.
+ *
+ * This MUST also close the shared PageFetcher. A `finally` block does not run
+ * when a process is signalled: during development, three interrupted scans left
+ * eleven orphaned headless-shell processes alive, each holding ~100MB. On a
+ * long-lived Railway service that leak compounds across every redeploy until
+ * the container OOMs.
  */
 async function shutdown(signal: string) {
   console.log(JSON.stringify({ msg: "shutting down", signal }));
   server.close();
-  // Queue workers registered in Stage 3 close here before exit.
+  // Stage 3: close BullMQ workers, then `await fetcher.close()`, before exit.
   process.exit(0);
 }
 process.on("SIGTERM", () => void shutdown("SIGTERM"));

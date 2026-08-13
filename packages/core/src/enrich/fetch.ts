@@ -217,8 +217,10 @@ export class PageFetcher {
     return out;
   }
 
+  /** Idempotent: signal handlers and normal teardown may both call this. */
   async close(): Promise<void> {
-    await this.browser?.close().catch(() => {});
+    const browser = this.browser;
     this.browser = null;
+    await browser?.close().catch(() => {});
   }
 }

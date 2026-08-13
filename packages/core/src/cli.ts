@@ -111,6 +111,21 @@ async function main(): Promise<void> {
     ...(values["stealth-budget"] ? { stealthBudget: Number(values["stealth-budget"]) } : {}),
   });
 
+  // A `finally` does not run when the process is signalled, so Ctrl-C or a
+  // `timeout` wrapper would leave the browser and its ~10 child processes
+  // orphaned, each holding ~100MB. Observed in testing: three abandoned scans
+  // left eleven headless-shell processes alive.
+  let shuttingDown = false;
+  const onSignal = (signal: NodeJS.Signals) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    process.stderr.write(`\n${C.dim}${signal} received — closing browser…${C.reset}\n`);
+    void fetcher.close().finally(() => process.exit(130));
+  };
+  process.once("SIGINT", onSignal);
+  process.once("SIGTERM", onSignal);
+  process.once("SIGHUP", onSignal);
+
   console.log(
     `\n${C.bold}Scanning ${input.brand}${C.reset} ${C.dim}(${input.domain}, ${input.industry})${C.reset}\n`,
   );
