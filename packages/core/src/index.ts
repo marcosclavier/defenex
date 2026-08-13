@@ -14,6 +14,6 @@ export {
   type Classifier,
   type ClassifierResult,
 } from "./classify/gemini.js";
-export { verifyEvidence } from "./classify/verify.js";
+export { verifyEvidence, isProbative } from "./classify/verify.js";
 export { severityFor, priorScore, severityLabel, SEVERITY_BANDS } from "./score/index.js";
 export { runScan, type RunScanOptions } from "./scan.js";

@@ -56,7 +56,10 @@ export class GeminiClassifier implements Classifier {
         }
 
         // Verify the quote actually exists before the finding is allowed to exist.
-        const check = verifyEvidence(entry.evidenceQuote, sourceTextFor(item));
+        const check = verifyEvidence(entry.evidenceQuote, sourceTextFor(item), {
+          brand: input.brand,
+          aliases: input.aliases,
+        });
         if (!check.ok) {
           if (entry.category !== "LEGITIMATE") {
             rejected += 1;
