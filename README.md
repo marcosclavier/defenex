@@ -49,10 +49,9 @@ pnpm db:studio       # browse the database
 
 ## Environment
 
-See `.env.example` for the full list. Note `SEARCH_ENGINE_ID` (not `GOOGLE_CSE_ID`) —
-it is the `cx` from the Programmable Search Engine console, which must have
-**"Search the entire web"** enabled. The Cloud project behind `GOOGLE_CLOUD_API_KEY`
-must have the **Custom Search API** enabled or every call 403s.
+See `.env.example` for the full list. Search runs on **YepAPI** (`YEPAPI_API_KEY`),
+which serves both SERP queries and the stealth scraper. Google Custom Search is
+retained only as a fallback provider and is being discontinued in January 2027.
 
 Run `pnpm preflight` after changing credentials. It verifies the Custom Search API,
 Gemini, the browser, and the SSRF guard, and tells you exactly which one is wrong.
@@ -72,6 +71,16 @@ Things that are non-obvious from the code:
   `msgpackr-extract` is explicitly denied since its JS fallback is fine.
 - **Worker runs on the official Playwright Docker image.** Building Chromium's system
   dependencies onto a bare node image is a day of chasing missing `.so` files.
+- **Search sits behind a `SearchProvider` interface.** Google is retiring the
+  Custom Search JSON API in January 2027, and YepAPI is a third party. Nothing
+  in the engine depends on a specific vendor.
+- **Search is billed per call, not per result.** Depth is therefore free
+  coverage: `depth: 100` costs the same $0.01 as `depth: 10`. The only cost of
+  going deep is latency (~7s vs ~1.4s).
+- **The stealth scraper is tier 2, never tier 1.** It costs 3x a search call and
+  takes 15-25s, so it fires only where the free browser path was already blocked,
+  under a per-scan cap. It returns no screenshot, so `evidenceSource` records
+  which findings lack visual evidence — takedown notices need it.
 - **`findings` is unique on `(brand_id, url_hash)`.** This is what makes a rescan a
   diff instead of a duplicate pile — upsert bumps `last_seen_at`, and URLs absent for
   two consecutive scans flip to `removed`, which is also the proof a takedown worked.

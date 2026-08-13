@@ -39,6 +39,22 @@ const NEVER_FLAG = new Set([
   "youtube.com",
 ]);
 
+/**
+ * Corporate SaaS hosts. A page at `<brand>.my.site.com` or
+ * `<brand>.myworkdayjobs.com` is the brand's own portal, not an impostor — the
+ * brand name in the hostname is how these products work.
+ *
+ * Found the hard way: a YETI scan spent fetch budget on their Salesforce
+ * community, their Workday careers site, and their jobs login page.
+ */
+const CORPORATE_SAAS_HOSTS = [
+  "my.site.com", "force.com", "salesforce.com", "myworkdayjobs.com",
+  "workday.com", "greenhouse.io", "lever.co", "myshopify.com",
+  "sharepoint.com", "atlassian.net", "zendesk.com", "freshdesk.com",
+  "hubspotpagebuilder.com", "pardot.com", "marketo.com", "outsystemsenterprise.com",
+  "service-now.com", "okta.com", "sparcretail.com", "trustpass.alibaba.com",
+];
+
 /** Strip protocol, port, www., and lowercase. Returns "" for unparseable input. */
 export function normalizeDomain(input: string): string {
   let host = input.trim().toLowerCase();
@@ -101,6 +117,10 @@ export function applyAllowlist(results: SearchResult[], input: ScanInput): Allow
       dropped.push({ result, reason: "reference_site" });
       continue;
     }
+    if (CORPORATE_SAAS_HOSTS.some((d) => isSameOrSubdomain(host, d))) {
+      dropped.push({ result, reason: "corporate_saas" });
+      continue;
+    }
 
     kept.push(result);
   }
@@ -108,4 +128,4 @@ export function applyAllowlist(results: SearchResult[], input: ScanInput): Allow
   return { kept, dropped };
 }
 
-export const __testing = { NEVER_FLAG };
+export const __testing = { NEVER_FLAG, CORPORATE_SAAS_HOSTS };

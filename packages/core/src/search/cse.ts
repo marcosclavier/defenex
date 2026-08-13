@@ -13,6 +13,7 @@ import {
   SearchConfigError,
   SearchRateLimitError,
 } from "../errors.js";
+import type { SearchOptions, SearchOutcome, SearchProvider } from "./types.js";
 import {
   MemoryCache,
   MemoryQuota,
@@ -36,16 +37,6 @@ export interface CseConfig {
   fetchImpl?: typeof fetch;
 }
 
-export interface SearchOptions {
-  /** Hard-capped at 100 by Google; `start` cannot exceed 91. */
-  maxResults?: number;
-  /** Geo-target, e.g. "us", "cn". Counterfeit operations cluster regionally. */
-  gl?: string;
-  /** e.g. "d7", "m1" — used by monitoring rescans. */
-  dateRestrict?: string;
-  excludeTerms?: string;
-}
-
 interface CseApiItem {
   title?: string;
   link?: string;
@@ -59,14 +50,6 @@ interface CseApiResponse {
   error?: { code?: number; message?: string; status?: string };
 }
 
-export interface SearchOutcome {
-  results: SearchResult[];
-  /** API calls actually made — cache hits cost nothing. */
-  queriesSpent: number;
-  costMicros: number;
-  fromCache: boolean;
-}
-
 function cacheKey(q: string, opts: SearchOptions, cx: string): string {
   return createHash("sha256")
     .update(JSON.stringify({ q, cx, ...opts }))
@@ -75,7 +58,18 @@ function cacheKey(q: string, opts: SearchOptions, cx: string): string {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-export class CseClient {
+/**
+ * Google Custom Search — FALLBACK ONLY.
+ *
+ * Google is discontinuing the Custom Search JSON API in January 2027. It also
+ * bills per 10-result page and refuses `start` above 91, so deep coverage costs
+ * ten calls where YepAPI costs one. Prefer {@link YepApiClient}.
+ *
+ * @deprecated Retained so the provider interface has a second implementation.
+ */
+export class CseClient implements SearchProvider {
+  readonly name = "google-cse";
+
   private readonly cache: CacheStore;
   private readonly quota: QuotaCounter;
   private readonly log: Logger;
@@ -100,13 +94,13 @@ export class CseClient {
    * yields a sample, not a census — worth remembering when reading a report.
    */
   async search(query: string, opts: SearchOptions = {}): Promise<SearchOutcome> {
-    const want = Math.min(opts.maxResults ?? CSE_MAX_RESULTS_PER_QUERY, CSE_MAX_TOTAL_RESULTS);
-    const key = cacheKey(query, { ...opts, maxResults: want }, this.config.searchEngineId);
+    const want = Math.min(opts.depth ?? CSE_MAX_RESULTS_PER_QUERY, CSE_MAX_TOTAL_RESULTS);
+    const key = cacheKey(query, { ...opts, depth: want }, this.config.searchEngineId);
 
     const cached = (await this.cache.get(key)) as SearchResult[] | null;
     if (cached) {
       this.log.debug("cse cache hit", { query });
-      return { results: cached, queriesSpent: 0, costMicros: 0, fromCache: true };
+      return { results: cached, callsSpent: 0, costMicros: 0, fromCache: true };
     }
 
     const results: SearchResult[] = [];
@@ -130,7 +124,7 @@ export class CseClient {
 
     return {
       results: trimmed,
-      queriesSpent: spent,
+      callsSpent: spent,
       costMicros: spent * CSE_COST_MICROS_PER_QUERY,
       fromCache: false,
     };
@@ -155,8 +149,6 @@ export class CseClient {
       safe: "off",
     });
     if (opts.gl) params.set("gl", opts.gl);
-    if (opts.dateRestrict) params.set("dateRestrict", opts.dateRestrict);
-    if (opts.excludeTerms) params.set("excludeTerms", opts.excludeTerms);
 
     const body = await this.requestWithRetry(`${ENDPOINT}?${params}`, query);
 
@@ -169,6 +161,7 @@ export class CseClient {
           snippet: item.snippet ?? "",
           displayLink: item.displayLink ?? "",
           sourceQuery: query,
+          resultType: "organic",
         },
       ];
     });

@@ -1,9 +1,10 @@
 import { parseArgs } from "node:util";
 import { writeFile } from "node:fs/promises";
 import { ScanInput, type Industry } from "@defenex/shared";
-import { CseClient } from "./cse/client.js";
+import { YepApiClient } from "./search/yepapi.js";
 import { GeminiClassifier } from "./classify/gemini.js";
 import { PageFetcher } from "./enrich/fetch.js";
+import { StealthScraper } from "./enrich/stealth.js";
 import { runScan } from "./scan.js";
 import { severityLabel } from "./score/index.js";
 import { QuotaExceededError, SearchConfigError } from "./errors.js";
@@ -34,8 +35,11 @@ ${C.bold}defenex scan${C.reset} — run the detection engine against a brand
   --industry   <pack>     fashion|electronics|software|cosmetics|supplements|generic
   --alias      <name>     repeatable
   --allow      <domain>   authorized domain to ignore, repeatable
-  --budget     <n>        max CSE queries (default 20)
+  --budget     <n>        max search calls (default 15, $0.01 each)
+  --depth      <n>        results per call (default 50, max 100 — same price)
   --max-enrich <n>        max pages to fetch (default 40)
+  --stealth-budget <n>    max paid stealth scrapes for blocked sites (default 8, $0.03 each)
+  --no-stealth            never fall back to the paid scraper
   --out        <file>     write full JSON results
   --quiet                 suppress progress logging
 
@@ -54,9 +58,12 @@ async function main(): Promise<void> {
       alias: { type: "string", multiple: true, default: [] },
       allow: { type: "string", multiple: true, default: [] },
       budget: { type: "string" },
+      depth: { type: "string" },
       "max-enrich": { type: "string" },
       out: { type: "string" },
       quiet: { type: "boolean", default: false },
+      "no-stealth": { type: "boolean", default: false },
+      "stealth-budget": { type: "string" },
       help: { type: "boolean", default: false },
     },
     allowPositionals: false,
@@ -84,17 +91,25 @@ async function main(): Promise<void> {
   const input = parsed.data;
   const logger = values.quiet ? silentLogger : consoleLogger;
 
-  const cse = new CseClient({
-    apiKey: process.env.GOOGLE_CLOUD_API_KEY ?? "",
-    searchEngineId: process.env.SEARCH_ENGINE_ID ?? "",
-    dailyCap: process.env.CSE_DAILY_CAP ? Number(process.env.CSE_DAILY_CAP) : undefined,
+  const search = new YepApiClient({
+    apiKey: process.env.YEPAPI_API_KEY ?? "",
+    dailyCap: process.env.SEARCH_DAILY_CAP ? Number(process.env.SEARCH_DAILY_CAP) : undefined,
+    defaultDepth: values.depth ? Number(values.depth) : undefined,
     logger,
   });
   const classifier = new GeminiClassifier({
     apiKey: process.env.GEMINI_API_KEY ?? "",
     logger,
   });
-  const fetcher = new PageFetcher({ logger, screenshot: true });
+  const stealth = values["no-stealth"]
+    ? undefined
+    : new StealthScraper({ apiKey: process.env.YEPAPI_API_KEY ?? "", logger });
+  const fetcher = new PageFetcher({
+    logger,
+    screenshot: true,
+    ...(stealth ? { stealth } : {}),
+    ...(values["stealth-budget"] ? { stealthBudget: Number(values["stealth-budget"]) } : {}),
+  });
 
   console.log(
     `\n${C.bold}Scanning ${input.brand}${C.reset} ${C.dim}(${input.domain}, ${input.industry})${C.reset}\n`,
@@ -102,7 +117,7 @@ async function main(): Promise<void> {
 
   try {
     const result = await runScan(input, {
-      cse,
+      search,
       classifier,
       fetcher,
       logger,
@@ -165,14 +180,23 @@ function printReport(result: Awaited<ReturnType<typeof runScan>>): void {
 
   const dollars = (stats.costMicros / 1_000_000).toFixed(4);
   console.log(`${C.bold}Stats${C.reset}`);
-  console.log(`  ${C.dim}CSE API calls      ${C.reset}${stats.queriesRun}`);
+  console.log(`  ${C.dim}Search API calls   ${C.reset}${stats.queriesRun}`);
   console.log(`  ${C.dim}Results seen       ${C.reset}${stats.resultsSeen}`);
   console.log(`  ${C.dim}After allowlist    ${C.reset}${stats.resultsAfterAllowlist}`);
-  console.log(`  ${C.dim}Pages fetched      ${C.reset}${stats.resultsEnriched}`);
+  console.log(`  ${C.dim}Pages fetched      ${C.reset}${stats.resultsEnriched} (${stats.fetchFailures} failed)`);
+  console.log(`  ${C.dim}Stealth scrapes    ${C.reset}${stats.stealthCallsUsed}`);
   console.log(`  ${C.dim}Findings published ${C.reset}${stats.findingsPublished}`);
   console.log(`  ${C.dim}Rejected (evidence)${C.reset}${stats.rejectedForBadEvidence}`);
-  console.log(`  ${C.dim}Search cost        ${C.reset}$${dollars}`);
-  console.log(`  ${C.dim}Duration           ${C.reset}${(stats.durationMs / 1000).toFixed(1)}s\n`);
+  console.log(`  ${C.dim}Cost               ${C.reset}$${dollars} ` +
+    `${C.dim}(search $${(stats.searchCostMicros / 1e6).toFixed(3)}, ` +
+    `stealth $${(stats.stealthCostMicros / 1e6).toFixed(3)})${C.reset}`);
+  console.log(`  ${C.dim}Duration           ${C.reset}${(stats.durationMs / 1000).toFixed(1)}s`);
+  const counts = Object.entries(stats.categoryCounts).sort((a, b) => b[1] - a[1]);
+  if (counts.length) {
+    console.log(`\n${C.bold}What the ${stats.resultsEnriched} fetched pages were${C.reset}`);
+    for (const [cat, n] of counts) console.log(`  ${C.dim}${cat.padEnd(20)}${C.reset}${n}`);
+  }
+  console.log("");
 }
 
 main().catch((err) => {

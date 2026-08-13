@@ -69,6 +69,19 @@ describe("applyAllowlist", () => {
     expect(dropped[0]?.reason).toBe("duplicate_url");
   });
 
+  it("drops corporate SaaS portals that carry the brand name by design", () => {
+    const { kept, dropped } = applyAllowlist(
+      [
+        result("https://acme.my.site.com/support"),
+        result("https://acmecorp.wd5.myworkdayjobs.com/careers"),
+        result("https://acme.greenhouse.io/jobs"),
+      ],
+      input,
+    );
+    expect(kept).toHaveLength(0);
+    expect(dropped.every((d) => d.reason === "corporate_saas")).toBe(true);
+  });
+
   it("keeps marketplaces — they host both genuine and counterfeit goods", () => {
     const { kept } = applyAllowlist([result("https://www.ebay.com/itm/123")], input);
     expect(kept).toHaveLength(1);

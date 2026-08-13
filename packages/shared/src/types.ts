@@ -65,6 +65,13 @@ export const ScanInput = z.object({
 });
 export type ScanInput = z.infer<typeof ScanInput>;
 
+/**
+ * Where a hit sat on the results page. Paid ads and shopping listings carry
+ * different weight from organic results: an ad bidding on the brand name is
+ * trademark misuse, and a product listing is a live commercial offer.
+ */
+export type SearchResultType = "organic" | "paid" | "product";
+
 /** One raw search hit, before enrichment or classification. */
 export interface SearchResult {
   url: string;
@@ -73,7 +80,21 @@ export interface SearchResult {
   displayLink: string;
   /** Which generated query surfaced this, for debugging query packs. */
   sourceQuery: string;
+  resultType?: SearchResultType;
+  /** 1-indexed SERP position. Rank is a proxy for reach. */
+  position?: number;
+  /** Google's own "potentially malicious" flag — a direct phishing signal. */
+  flaggedMalicious?: boolean;
+  /** Present on shopping/product results. */
+  price?: string;
 }
+
+/**
+ * How a page's content was obtained. Only the browser path yields a screenshot,
+ * and screenshots are the visual evidence a takedown notice needs — so this is
+ * recorded per finding rather than assumed.
+ */
+export type EvidenceSource = "browser" | "stealth";
 
 /** A search hit after we fetched the real page. */
 export interface EnrichedResult extends SearchResult {
@@ -83,6 +104,7 @@ export interface EnrichedResult extends SearchResult {
   pageText: string | null;
   screenshot: Buffer | null;
   fetchError: string | null;
+  evidenceSource: EvidenceSource | null;
 }
 
 /** The classifier's verdict on one result. */
@@ -105,19 +127,39 @@ export interface Finding {
   reasoning: string;
   sourceQuery: string;
   screenshot: Buffer | null;
+  evidenceSource: EvidenceSource | null;
+}
+
+/** Per-page trace of what the pipeline did. Essential for tuning precision. */
+export interface PageDiagnostic {
+  url: string;
+  prior: number;
+  evidenceSource: EvidenceSource | null;
+  textChars: number;
+  httpStatus: number;
+  fetchError: string | null;
+  category: FindingCategory | "NOT_CLASSIFIED";
+  confidence: Confidence | null;
+  evidenceRejected?: boolean;
 }
 
 export interface ScanResult {
   input: ScanInput;
   findings: Finding[];
+  diagnostics: PageDiagnostic[];
   stats: {
     queriesRun: number;
     resultsSeen: number;
     resultsAfterAllowlist: number;
     resultsEnriched: number;
+    fetchFailures: number;
+    stealthCallsUsed: number;
     findingsPublished: number;
     rejectedForBadEvidence: number;
+    searchCostMicros: number;
+    stealthCostMicros: number;
     costMicros: number;
     durationMs: number;
+    categoryCounts: Record<string, number>;
   };
 }

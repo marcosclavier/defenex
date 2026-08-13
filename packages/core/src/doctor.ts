@@ -3,7 +3,7 @@
  * Run after changing credentials: `pnpm doctor`
  */
 import { GoogleGenAI } from "@google/genai";
-import { CseClient } from "./cse/client.js";
+import { YepApiClient } from "./search/yepapi.js";
 import { GeminiClassifier } from "./classify/gemini.js";
 import { PageFetcher } from "./enrich/fetch.js";
 import { SearchConfigError } from "./errors.js";
@@ -30,8 +30,12 @@ function report(name: string, ok: boolean | "warn", detail = ""): void {
 
 async function checkEnv(): Promise<void> {
   console.log(`\n${C.bold}Environment${C.reset}`);
-  const required = ["GOOGLE_CLOUD_API_KEY", "SEARCH_ENGINE_ID", "GEMINI_API_KEY"];
-  const optional = ["DATABASE_URL", "REDIS_URL", "RESEND_API_KEY", "APIFY_API_KEY", "CLOUDFLARE_BUCKET_S3_API"];
+  const required = ["YEPAPI_API_KEY", "GEMINI_API_KEY"];
+  const optional = [
+    "DATABASE_URL", "REDIS_URL", "RESEND_API_KEY", "APIFY_API_KEY",
+    "CLOUDFLARE_BUCKET_S3_ENDPOINT", "CLOUDFLARE_BUCKET_S3_ACCESS_KEY_ID",
+    "CLOUDFLARE_BUCKET_S3_SECRET_ACCESS_KEY",
+  ];
 
   for (const key of required) {
     report(key, Boolean(process.env[key]), process.env[key] ? "" : "required by the detection engine");
@@ -43,24 +47,27 @@ async function checkEnv(): Promise<void> {
 }
 
 async function checkSearch(): Promise<void> {
-  console.log(`\n${C.bold}Google Custom Search${C.reset}`);
+  console.log(`\n${C.bold}Search (YepAPI SERP)${C.reset}`);
   try {
-    const cse = new CseClient({
-      apiKey: process.env.GOOGLE_CLOUD_API_KEY ?? "",
-      searchEngineId: process.env.SEARCH_ENGINE_ID ?? "",
-    });
-    const out = await cse.search("site:example.com", { maxResults: 1 });
-    report("API reachable", true, `${out.results.length} result(s), ${out.queriesSpent} query spent`);
+    const search = new YepApiClient({ apiKey: process.env.YEPAPI_API_KEY ?? "" });
 
-    // A site-restricted engine silently returns nothing for open-web queries,
-    // which looks identical to "brand is clean". Detect it explicitly.
-    const web = await cse.search('"open web configuration check" news', { maxResults: 1 });
-    if (web.results.length === 0) {
-      report("searches the entire web", "warn",
-        'No results for a generic query. In the Programmable Search Engine console, turn ON "Search the entire web".');
-    } else {
-      report("searches the entire web", true);
-    }
+    const out = await search.search("brand protection software", { depth: 10 });
+    report("API reachable", out.results.length > 0,
+      `${out.results.length} result(s), $${(out.costMicros / 1_000_000).toFixed(3)}`);
+
+    // Every open-web query the engine generates relies on Google operators
+    // passing through the vendor untouched. If they stop working, scans
+    // silently fill with the brand's own pages.
+    const site = await search.search('site:dhgate.com "yeti"', { depth: 10 });
+    const offSite = site.results.filter((r) => !r.displayLink.includes("dhgate.com"));
+    report("site: operator honoured", site.results.length > 0 && offSite.length === 0,
+      `${site.results.length} result(s), ${offSite.length} off-site`);
+
+    // Non-US location codes are inferred from the DataForSEO pattern
+    // (2000 + ISO 3166-1 numeric); only 2840/US is vendor-documented.
+    const geo = await search.search('"replica watch"', { depth: 10, gl: "de" });
+    report("location targeting accepted", geo.results.length > 0,
+      `gl=de returned ${geo.results.length} result(s)`);
   } catch (err) {
     const msg = err instanceof SearchConfigError ? err.message : String(err);
     report("API reachable", false, msg);
@@ -92,7 +99,7 @@ async function checkGemini(): Promise<void> {
   const page = (url: string, title: string, text: string): EnrichedResult => ({
     url, title: "", snippet: "", displayLink: "", sourceQuery: "q",
     finalUrl: url, httpStatus: 200, pageTitle: title, pageText: text,
-    screenshot: null, fetchError: null,
+    screenshot: null, fetchError: null, evidenceSource: "browser",
   });
 
   const cases = [
