@@ -9,7 +9,8 @@ import {
 } from "@defenex/db";
 import { env } from "./env.js";
 import { logger } from "./logger.js";
-import { scanJobId, scanQueue } from "./queues.js";
+import { scanQueue } from "./queues.js";
+import { scanJobId } from "./job-ids.js";
 import { signedUrlFor } from "./storage/r2.js";
 
 /** Constant-time compare so the secret cannot be recovered by timing the endpoint. */

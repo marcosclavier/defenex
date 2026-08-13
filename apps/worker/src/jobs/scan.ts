@@ -13,6 +13,7 @@ import { dbCache, dbQuota } from "../ports.js";
 import { getFetcher } from "../browser.js";
 import { putObject, screenshotKey } from "../storage/r2.js";
 import { reportQueue, type ScanJobData } from "../queues.js";
+import { reportJobId } from "../job-ids.js";
 import { urlHashOf } from "../url.js";
 
 export async function processScan(job: Job<ScanJobData>): Promise<void> {
@@ -118,7 +119,7 @@ export async function processScan(job: Job<ScanJobData>): Promise<void> {
     await reportQueue.add(
       "report",
       { scanId, email: job.data.requestedByEmail ?? null },
-      { jobId: `report:${scanId}` },
+      { jobId: reportJobId(scanId) },
     );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

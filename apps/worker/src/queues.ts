@@ -3,6 +3,8 @@ import IORedis from "ioredis";
 import { env } from "./env.js";
 import { logger } from "./logger.js";
 
+export { scanJobId, reportJobId } from "./job-ids.js";
+
 export interface ScanJobData {
   scanId: string;
   brandId: string;
@@ -38,14 +40,6 @@ const defaultJobOptions = {
 
 export const scanQueue = new Queue<ScanJobData>(QUEUE_SCAN, { connection, defaultJobOptions });
 export const reportQueue = new Queue<ReportJobData>(QUEUE_REPORT, { connection, defaultJobOptions });
-
-/**
- * Deterministic job id per scan. A double form submission would otherwise
- * enqueue the same scan twice and bill the search API twice.
- */
-export function scanJobId(scanId: string): string {
-  return `scan:${scanId}`;
-}
 
 const workers: Worker[] = [];
 
