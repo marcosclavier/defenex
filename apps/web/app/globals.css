@@ -1,26 +1,102 @@
 @import "tailwindcss";
 
 /*
- * Defenex design tokens — dark technical authority.
- * Full system lands in Stage 4; these are the canvas primitives so the
- * scaffold already renders in the right key rather than default white.
+ * Defenex — evidence docket.
+ *
+ * Committed single-theme: this is an instrument, read in one visual world.
+ * Every colour is painted explicitly rather than inherited, so nothing depends
+ * on the host ground.
+ *
+ * The accent is bone white, not a chromatic pop. Severity is therefore the only
+ * colour on the page, which is what makes triage readable at a glance.
  */
 @theme {
   --color-canvas: #0a0b0d;
   --color-surface: #121316;
   --color-raised: #191b1f;
   --color-line: #232529;
+  --color-line-strong: #33363c;
 
   --color-ink: #e8eaed;
   --color-ink-dim: #9ba1a8;
   --color-ink-mute: #6b7280;
+
+  /* Accent: warm bone against cool near-black. Primary actions only. */
+  --color-paper: #f2efe9;
+  --color-paper-dim: #d8d3c9;
+
+  /* Semantic severity. Never used for interactive affordances. */
+  --color-critical: #f0575b;
+  --color-high: #e08a3c;
+  --color-medium: #c9a227;
+  --color-low: #8b9199;
+
+  --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, SFMono-Regular, monospace;
+}
+
+:root {
+  color-scheme: dark;
 }
 
 html {
-  color-scheme: dark;
+  background-color: var(--color-canvas);
 }
 
 body {
   background-color: var(--color-canvas);
   color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
 }
+
+/* Type scale — stay on it. */
+.t-display { font-size: clamp(2.25rem, 5.5vw, 4rem); line-height: 1.02; letter-spacing: -0.03em; font-weight: 600; text-wrap: balance; }
+.t-h2      { font-size: clamp(1.5rem, 2.6vw, 2rem); line-height: 1.15; letter-spacing: -0.02em; font-weight: 600; text-wrap: balance; }
+.t-h3      { font-size: 1.125rem; line-height: 1.3; letter-spacing: -0.01em; font-weight: 600; }
+.t-body    { font-size: 1rem; line-height: 1.6; }
+.t-small   { font-size: 0.875rem; line-height: 1.55; }
+
+/* Eyebrow: used only where it labels a real section, never as decoration. */
+.t-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--color-ink-mute);
+}
+
+/* Data is monospaced: domains and URLs are the primary content here, and
+   monospacing them is a legibility decision, not decoration. */
+.t-data {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+  word-break: break-all;
+}
+
+.measure { max-width: 64ch; }
+
+/* Wide content scrolls inside its own container; the body never scrolls sideways. */
+.scroll-x { overflow-x: auto; }
+
+:focus-visible {
+  outline: 2px solid var(--color-paper);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Scanline sweep on the progress bar — ambient, and the one motion on the site. */
+@keyframes sweep {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+.sweep { animation: sweep 2.2s cubic-bezier(0.4, 0, 0.2, 1) infinite; }

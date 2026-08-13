@@ -15,11 +15,16 @@
     "db:generate": "pnpm --filter @defenex/db generate",
     "db:migrate": "pnpm --filter @defenex/db migrate",
     "db:studio": "pnpm --filter @defenex/db studio",
-    "preflight": "pnpm --filter @defenex/core preflight"
+    "preflight": "pnpm --filter @defenex/core preflight",
+    "assets": "tsx scripts/generate-assets.ts"
   },
   "devDependencies": {
     "@types/node": "^22.18.0",
     "turbo": "^2.10.9",
-    "typescript": "^5.9.0"
+    "typescript": "^5.9.0",
+    "tsx": "^4.19.0",
+    "@google/genai": "^2.16.0",
+    "sharp": "^0.34.0",
+    "playwright": "^1.62.1"
   }
 }

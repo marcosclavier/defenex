@@ -5,11 +5,12 @@ import { eq } from "drizzle-orm";
 import { ScanInput } from "@defenex/shared";
 import { severityLabel } from "@defenex/core";
 import {
-  brands, createScan, getDb, getReportByToken, getScan, listFindings, upsertBrand,
+  brands, createScan, getDb, getReportByScanId, getReportByToken, getScan, listFindings, upsertBrand,
 } from "@defenex/db";
 import { env } from "./env.js";
 import { logger } from "./logger.js";
-import { scanQueue } from "./queues.js";
+import { redisClient, scanQueue } from "./queues.js";
+import { createRateLimiter } from "./rate-limit.js";
 import { scanJobId } from "./job-ids.js";
 import { signedUrlFor } from "./storage/r2.js";
 
@@ -23,6 +24,7 @@ function secretMatches(candidate: string): boolean {
 
 export function createApi(): Hono {
   const app = new Hono();
+  const checkRateLimit = createRateLimiter(redisClient);
 
   // Public: reports only that the process is alive. Deliberately reveals
   // nothing about databases or queues — a health check that fails on a
@@ -56,6 +58,20 @@ export function createApi(): Hono {
       );
     }
     const input = parsed.data;
+
+    // Scheduled and outreach scans are ours, not public traffic.
+    if (input.trigger === "user") {
+      const ip = c.req.header("x-client-ip") ?? c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+      const limit = await checkRateLimit(input.domain, ip);
+      if (!limit.allowed) {
+        logger.info({ domain: input.domain, scope: limit.scope }, "rate limited");
+        return c.json(
+          { error: "rate_limited", scope: limit.scope },
+          429,
+          { "retry-after": String(Math.max(limit.retryAfterSeconds ?? 3600, 60)) },
+        );
+      }
+    }
 
     const brand = await upsertBrand({
       name: input.brand,
@@ -95,7 +111,14 @@ export function createApi(): Hono {
     const scan = await getScan(c.req.param("id"));
     if (!scan) return c.json({ error: "not_found" }, 404);
 
+    // Present only once the report row exists, which is how the progress page
+    // knows where to send the visitor.
+    const report = scan.status === "completed" || scan.status === "partial"
+      ? await getReportByScanId(scan.id)
+      : null;
+
     return c.json({
+      reportToken: report?.publicToken ?? null,
       scanId: scan.id,
       status: scan.status,
       stage: scan.progressStage,

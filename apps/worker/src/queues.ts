@@ -26,10 +26,14 @@ export const QUEUE_REPORT = "report";
 
 // BullMQ requires this to be null: with retries enabled a blocking command can
 // abort mid-job and silently drop work.
-const connection: ConnectionOptions = new IORedis(env.REDIS_URL, {
+const redis = new IORedis(env.REDIS_URL, {
   maxRetriesPerRequest: null,
   enableReadyCheck: false,
 });
+const connection: ConnectionOptions = redis;
+
+/** Shared with the rate limiter so we hold one Redis connection, not two. */
+export const redisClient = redis;
 
 const defaultJobOptions = {
   attempts: 3,
@@ -77,5 +81,5 @@ export function startWorkers(handlers: {
 export async function closeQueues(): Promise<void> {
   await Promise.allSettled(workers.map((w) => w.close()));
   await Promise.allSettled([scanQueue.close(), reportQueue.close()]);
-  await (connection as IORedis).quit().catch(() => {});
+  await redis.quit().catch(() => {});
 }

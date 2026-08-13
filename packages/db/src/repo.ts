@@ -153,6 +153,11 @@ export async function getReportByToken(token: string, db: Db = getDb()) {
   return db.query.reports.findFirst({ where: eq(reports.publicToken, token) });
 }
 
+/** Lets the progress UI find the report once the scan finishes. */
+export async function getReportByScanId(scanId: string, db: Db = getDb()) {
+  return db.query.reports.findFirst({ where: eq(reports.scanId, scanId) });
+}
+
 // ------------------------------------------------------------ engine ports
 
 export async function cacheGet(key: string, ttlMs: number, db: Db = getDb()) {
