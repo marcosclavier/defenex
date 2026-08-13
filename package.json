@@ -2,7 +2,9 @@
   "name": "defenex",
   "private": true,
   "packageManager": "pnpm@11.21.0",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "build": "turbo build",
     "dev": "turbo dev",
@@ -12,7 +14,8 @@
     "scan": "pnpm --filter @defenex/core scan",
     "db:generate": "pnpm --filter @defenex/db generate",
     "db:migrate": "pnpm --filter @defenex/db migrate",
-    "db:studio": "pnpm --filter @defenex/db studio"
+    "db:studio": "pnpm --filter @defenex/db studio",
+    "preflight": "pnpm --filter @defenex/core preflight"
   },
   "devDependencies": {
     "@types/node": "^22.18.0",

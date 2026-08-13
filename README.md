@@ -40,6 +40,7 @@ pnpm typecheck       # tsc --noEmit across the workspace
 pnpm test            # vitest
 pnpm build           # build everything
 
+pnpm preflight       # check every credential and dependency works
 pnpm scan --brand "Acme Tools" --domain acmetools.com   # run the engine from the CLI
 pnpm db:generate     # generate a migration from schema changes
 pnpm db:migrate      # apply migrations (needs DATABASE_URL)
@@ -52,6 +53,10 @@ See `.env.example` for the full list. Note `SEARCH_ENGINE_ID` (not `GOOGLE_CSE_I
 it is the `cx` from the Programmable Search Engine console, which must have
 **"Search the entire web"** enabled. The Cloud project behind `GOOGLE_CLOUD_API_KEY`
 must have the **Custom Search API** enabled or every call 403s.
+
+Run `pnpm preflight` after changing credentials. It verifies the Custom Search API,
+Gemini, the browser, and the SSRF guard, and tells you exactly which one is wrong.
+Behind an egress-restricted network, set `PREFLIGHT_FETCH_URL` to a permitted host.
 
 ## Decisions log
 
