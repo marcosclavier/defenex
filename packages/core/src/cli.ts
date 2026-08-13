@@ -108,7 +108,6 @@ async function main(): Promise<void> {
     logger,
     screenshot: true,
     ...(stealth ? { stealth } : {}),
-    ...(values["stealth-budget"] ? { stealthBudget: Number(values["stealth-budget"]) } : {}),
   });
 
   // A `finally` does not run when the process is signalled, so Ctrl-C or a
@@ -137,6 +136,11 @@ async function main(): Promise<void> {
       fetcher,
       logger,
       maxEnrich: values["max-enrich"] ? Number(values["max-enrich"]) : undefined,
+      stealthBudget: values["no-stealth"]
+        ? 0
+        : values["stealth-budget"]
+          ? Number(values["stealth-budget"])
+          : undefined,
       onProgress: (stage, pct) => {
         if (!values.quiet) process.stderr.write(`${C.dim}  [${String(pct).padStart(3)}%] ${stage}${C.reset}\n`);
       },

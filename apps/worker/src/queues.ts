@@ -14,6 +14,8 @@ export interface ScanJobData {
   aliases: string[];
   allowlistDomains: string[];
   requestedByEmail?: string | null;
+  /** Resolved from the requester's tier when the scan was accepted. */
+  stealthBudget: number;
 }
 
 export interface ReportJobData {

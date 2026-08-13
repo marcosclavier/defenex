@@ -98,6 +98,10 @@ export function createApi(): Hono {
         aliases: input.aliases,
         allowlistDomains: input.allowlistDomains,
         requestedByEmail: input.email ?? null,
+        // Gating: the paid tier is reserved for requesters who identify
+        // themselves. An anonymous scan still runs, just shallower on sites
+        // that block an ordinary browser.
+        stealthBudget: input.email ? env.STEALTH_BUDGET_IDENTIFIED : env.STEALTH_BUDGET_ANON,
       },
       // Deterministic id: a double submit must not bill the search API twice.
       { jobId: scanJobId(scan.id) },

@@ -28,7 +28,13 @@ const Env = z.object({
   SCAN_QUERY_BUDGET: z.coerce.number().default(15),
   SEARCH_DEPTH: z.coerce.number().default(50),
   SEARCH_DAILY_CAP: z.coerce.number().default(5000),
-  STEALTH_BUDGET: z.coerce.number().default(6),
+  /**
+   * Paid stealth calls per scan, by tier. Anonymous scans get a small
+   * allowance so they still return something useful on bot-blocked
+   * marketplaces, without letting an unidentified visitor spend $0.30 a click.
+   */
+  STEALTH_BUDGET_ANON: z.coerce.number().default(2),
+  STEALTH_BUDGET_IDENTIFIED: z.coerce.number().default(8),
   SCAN_CONCURRENCY: z.coerce.number().default(2),
   REPORT_CONCURRENCY: z.coerce.number().default(3),
 });

@@ -17,8 +17,36 @@ export interface FetcherOptions {
   userAgent?: string;
   /** Tier-2 fetcher for sites that block a headless browser. */
   stealth?: StealthScraper;
-  /** Hard cap on paid stealth calls per fetcher instance. */
+}
+
+/**
+ * Paid-call budget for ONE scan.
+ *
+ * Deliberately per-run rather than per-fetcher. The fetcher is a process-wide
+ * singleton so that concurrent scans share one browser; holding the budget on
+ * it meant two scans drew from the same allowance and reported each other's
+ * spend. It also makes the budget a per-request policy decision, which is how
+ * the free tier is gated.
+ */
+export interface StealthBudget {
+  remaining: number;
+  used: number;
+  costMicros: number;
+}
+
+export function createStealthBudget(limit: number): StealthBudget {
+  return { remaining: Math.max(0, limit), used: 0, costMicros: 0 };
+}
+
+export interface FetchManyOptions {
+  concurrency?: number;
   stealthBudget?: number;
+}
+
+export interface FetchManyResult {
+  results: EnrichedResult[];
+  stealthCallsUsed: number;
+  stealthCostMicros: number;
 }
 
 /** Page text shorter than this means the fetch was defeated, not that the page is empty. */
@@ -48,9 +76,6 @@ export class PageFetcher {
   private readonly log: Logger;
   private readonly userAgent: string;
   private readonly stealth: StealthScraper | undefined;
-  private stealthRemaining: number;
-  private stealthUsed = 0;
-  private stealthCostMicros = 0;
 
   constructor(opts: FetcherOptions = {}) {
     this.timeoutMs = opts.timeoutMs ?? 20_000;
@@ -60,11 +85,6 @@ export class PageFetcher {
       opts.userAgent ??
       "Mozilla/5.0 (compatible; DefenexBot/1.0; +https://defenex.com/bot)";
     this.stealth = opts.stealth;
-    this.stealthRemaining = opts.stealthBudget ?? DEFAULT_STEALTH_BUDGET;
-  }
-
-  get stats() {
-    return { stealthCallsUsed: this.stealthUsed, stealthCostMicros: this.stealthCostMicros };
   }
 
   private async getBrowser(): Promise<Browser> {
@@ -76,7 +96,7 @@ export class PageFetcher {
     return this.browser;
   }
 
-  async fetchOne(result: SearchResult): Promise<EnrichedResult> {
+  async fetchOne(result: SearchResult, budget?: StealthBudget): Promise<EnrichedResult> {
     const base: EnrichedResult = {
       ...result,
       finalUrl: result.url,
@@ -136,7 +156,7 @@ export class PageFetcher {
       // Anti-bot pages return 403/503, or a 200 carrying an interstitial with
       // almost no text. Both mean we did not actually see the listing.
       if (status >= 400 || text.length < MIN_USEFUL_TEXT) {
-        const viaStealth = await this.tryStealth(base, `browser saw status ${status}, ${text.length} chars`);
+        const viaStealth = await this.tryStealth(base, budget, `browser saw status ${status}, ${text.length} chars`);
         if (viaStealth) return viaStealth;
       }
 
@@ -153,7 +173,7 @@ export class PageFetcher {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.log.warn("fetch failed", { url: result.url, error: message });
-      const viaStealth = await this.tryStealth(base, message);
+      const viaStealth = await this.tryStealth(base, budget, message);
       return viaStealth ?? { ...base, fetchError: message };
     } finally {
       // A leaked context is how the worker OOMs at 3am.
@@ -168,15 +188,19 @@ export class PageFetcher {
    * Returns no screenshot, so findings sourced this way carry text evidence but
    * no visual evidence; `evidenceSource` records the difference.
    */
-  private async tryStealth(base: EnrichedResult, why: string): Promise<EnrichedResult | null> {
-    if (!this.stealth || this.stealthRemaining <= 0) return null;
-    this.stealthRemaining -= 1;
+  private async tryStealth(
+    base: EnrichedResult,
+    budget: StealthBudget | undefined,
+    why: string,
+  ): Promise<EnrichedResult | null> {
+    if (!this.stealth || !budget || budget.remaining <= 0) return null;
+    budget.remaining -= 1;
 
     try {
       this.log.info("falling back to stealth scrape", { url: base.url, why });
       const out = await this.stealth.scrape(base.url);
-      this.stealthUsed += 1;
-      this.stealthCostMicros += out.costMicros;
+      budget.used += 1;
+      budget.costMicros += out.costMicros;
 
       if (out.text.length < MIN_USEFUL_TEXT) {
         return { ...base, httpStatus: out.statusCode, fetchError: `stealth returned ${out.text.length} chars` };
@@ -200,7 +224,9 @@ export class PageFetcher {
   }
 
   /** Fetch with bounded concurrency — unbounded parallelism exhausts memory. */
-  async fetchMany(results: SearchResult[], concurrency = 4): Promise<EnrichedResult[]> {
+  async fetchMany(results: SearchResult[], opts: FetchManyOptions = {}): Promise<FetchManyResult> {
+    const concurrency = opts.concurrency ?? 4;
+    const budget = createStealthBudget(opts.stealthBudget ?? DEFAULT_STEALTH_BUDGET);
     const out: EnrichedResult[] = new Array(results.length);
     let cursor = 0;
 
@@ -209,12 +235,12 @@ export class PageFetcher {
         const i = cursor++;
         const item = results[i];
         if (!item) break;
-        out[i] = await this.fetchOne(item);
+        out[i] = await this.fetchOne(item, budget);
       }
     });
 
     await Promise.all(runners);
-    return out;
+    return { results: out, stealthCallsUsed: budget.used, stealthCostMicros: budget.costMicros };
   }
 
   /**

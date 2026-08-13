@@ -23,6 +23,8 @@ export interface RunScanOptions {
   depth?: number;
   /** Pages actually fetched. Bounds both wall-clock and cost. */
   maxEnrich?: number;
+  /** Paid stealth calls allowed for THIS scan. Zero disables the paid tier. */
+  stealthBudget?: number;
   fetchConcurrency?: number;
   searchConcurrency?: number;
   onProgress?: (stage: string, percent: number) => void;
@@ -105,13 +107,16 @@ export async function runScan(input: ScanInput, opts: RunScanOptions): Promise<S
   const ranked = rankedWithPrior.map((x) => x.r);
 
   progress(`analyzing ${ranked.length} results`, 35);
-  const enriched = await opts.fetcher.fetchMany(ranked, opts.fetchConcurrency ?? 6);
+  const fetch = await opts.fetcher.fetchMany(ranked, {
+    concurrency: opts.fetchConcurrency ?? 6,
+    ...(opts.stealthBudget !== undefined ? { stealthBudget: opts.stealthBudget } : {}),
+  });
+  const enriched = fetch.results;
   const fetchFailures = enriched.filter((e) => e.fetchError).length;
-  const fetcherStats = opts.fetcher.stats;
   log.info("enrichment complete", {
     fetched: enriched.length,
     failures: fetchFailures,
-    viaStealth: fetcherStats.stealthCallsUsed,
+    viaStealth: fetch.stealthCallsUsed,
   });
   progress("capturing evidence", 65);
 
@@ -175,12 +180,12 @@ export async function runScan(input: ScanInput, opts: RunScanOptions): Promise<S
       resultsAfterAllowlist: kept.length,
       resultsEnriched: enriched.length,
       fetchFailures,
-      stealthCallsUsed: fetcherStats.stealthCallsUsed,
+      stealthCallsUsed: fetch.stealthCallsUsed,
       findingsPublished: findings.length,
       rejectedForBadEvidence,
       searchCostMicros,
-      stealthCostMicros: fetcherStats.stealthCostMicros,
-      costMicros: searchCostMicros + fetcherStats.stealthCostMicros,
+      stealthCostMicros: fetch.stealthCostMicros,
+      costMicros: searchCostMicros + fetch.stealthCostMicros,
       durationMs: Date.now() - started,
       categoryCounts,
     },

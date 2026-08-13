@@ -16,7 +16,8 @@
     "db:migrate": "pnpm --filter @defenex/db migrate",
     "db:studio": "pnpm --filter @defenex/db studio",
     "preflight": "pnpm --filter @defenex/core preflight",
-    "assets": "tsx scripts/generate-assets.ts"
+    "assets": "tsx scripts/generate-assets.ts",
+    "stripe:setup": "tsx scripts/setup-stripe.ts"
   },
   "devDependencies": {
     "@types/node": "^22.18.0",

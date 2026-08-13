@@ -10,6 +10,10 @@ let fetcher: PageFetcher | null = null;
  * A fetcher per job would multiply a ~300MB Chromium process by the queue
  * concurrency and OOM the container. Contexts are cheap and still isolate
  * cookies and storage between hostile pages.
+ *
+ * The paid stealth budget is deliberately NOT set here. It is per-scan, decided
+ * by the caller from the requester's tier — holding it on this singleton meant
+ * concurrent scans drew from one shared allowance.
  */
 export function getFetcher(): PageFetcher {
   if (!fetcher) {
@@ -17,7 +21,6 @@ export function getFetcher(): PageFetcher {
       logger: coreLogger,
       screenshot: true,
       stealth: new StealthScraper({ apiKey: env.YEPAPI_API_KEY, logger: coreLogger }),
-      stealthBudget: env.STEALTH_BUDGET,
     });
   }
   return fetcher;

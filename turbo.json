@@ -23,7 +23,9 @@
     "SENTRY_DSN",
     "SCAN_QUERY_BUDGET",
     "SEARCH_DAILY_CAP",
-    "SEARCH_DEPTH"
+    "SEARCH_DEPTH",
+    "STEALTH_BUDGET_ANON",
+    "STEALTH_BUDGET_IDENTIFIED"
   ],
   "tasks": {
     "build": {

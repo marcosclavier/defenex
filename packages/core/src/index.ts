@@ -6,7 +6,14 @@ export { CseClient, type CseConfig } from "./search/cse.js";
 export { buildQueries, type PlannedQuery, type QueryKind } from "./queries/templates.js";
 export { applyAllowlist, normalizeDomain, isSameOrSubdomain } from "./enrich/allowlist.js";
 export { assertUrlIsFetchable, blockedIpReason } from "./enrich/ssrf.js";
-export { PageFetcher, type FetcherOptions } from "./enrich/fetch.js";
+export {
+  PageFetcher,
+  createStealthBudget,
+  type FetcherOptions,
+  type FetchManyOptions,
+  type FetchManyResult,
+  type StealthBudget,
+} from "./enrich/fetch.js";
 export { StealthScraper, htmlToText, type StealthConfig } from "./enrich/stealth.js";
 export {
   GeminiClassifier,

@@ -56,6 +56,7 @@ export async function processScan(job: Job<ScanJobData>): Promise<void> {
       fetcher: getFetcher(),
       logger: coreLogger,
       depth: env.SEARCH_DEPTH,
+      stealthBudget: job.data.stealthBudget ?? env.STEALTH_BUDGET_ANON,
       onProgress: (stage, percent) => {
         // Fire-and-forget: a progress write must never fail the scan.
         void updateScanProgress(scanId, { progressStage: stage, progressPercent: percent }).catch(
