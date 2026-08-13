@@ -1,0 +1,26 @@
+@import "tailwindcss";
+
+/*
+ * Defenex design tokens — dark technical authority.
+ * Full system lands in Stage 4; these are the canvas primitives so the
+ * scaffold already renders in the right key rather than default white.
+ */
+@theme {
+  --color-canvas: #0a0b0d;
+  --color-surface: #121316;
+  --color-raised: #191b1f;
+  --color-line: #232529;
+
+  --color-ink: #e8eaed;
+  --color-ink-dim: #9ba1a8;
+  --color-ink-mute: #6b7280;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background-color: var(--color-canvas);
+  color: var(--color-ink);
+}

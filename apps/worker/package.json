@@ -1,0 +1,28 @@
+{
+  "name": "@defenex/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsup src/index.ts --format esm --target node22 --clean --sourcemap",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@defenex/core": "workspace:*",
+    "@defenex/db": "workspace:*",
+    "@defenex/emails": "workspace:*",
+    "@defenex/shared": "workspace:*",
+    "bullmq": "^5.81.3",
+    "ioredis": "^5.11.1",
+    "resend": "^6.19.0"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.1",
+    "tsx": "^4.19.0",
+    "typescript": "^5.9.0",
+    "vitest": "^4.1.10"
+  }
+}

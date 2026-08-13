@@ -1,0 +1,21 @@
+{
+  "name": "@defenex/emails",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@defenex/shared": "workspace:*",
+    "@react-email/components": "^0.5.0",
+    "react": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.0",
+    "typescript": "^5.9.0",
+    "vitest": "^4.1.10"
+  }
+}

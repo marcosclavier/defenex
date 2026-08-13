@@ -1,0 +1,15 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# pnpm >=11 blocks postinstall scripts unless explicitly allowed.
+# Allow only what genuinely needs a build; deny the rest to keep the
+# install-time execution surface small.
+allowBuilds:
+  esbuild: true          # native binary
+  playwright: true       # browser download
+  sharp: true            # native image codecs
+  "@google/genai": true
+  protobufjs: true
+  "@sentry/cli": true
+  msgpackr-extract: false # optional accelerator; the JS fallback is fine

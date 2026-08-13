@@ -1,0 +1,35 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "ui": "stream",
+  "globalEnv": [
+    "NODE_ENV",
+    "DATABASE_URL",
+    "REDIS_URL",
+    "GOOGLE_CLOUD_API_KEY",
+    "SEARCH_ENGINE_ID",
+    "GEMINI_API_KEY",
+    "APIFY_API_KEY",
+    "RESEND_API_KEY",
+    "STRIPE_API_KEY",
+    "STRIPE_WEBHOOK_SECRET",
+    "CLOUDFLARE_BUCKET_S3_API",
+    "R2_ACCESS_KEY_ID",
+    "R2_SECRET_ACCESS_KEY",
+    "R2_BUCKET",
+    "AUTH_SECRET",
+    "NEXT_PUBLIC_APP_URL",
+    "SENTRY_DSN",
+    "SCAN_QUERY_BUDGET",
+    "CSE_DAILY_CAP"
+  ],
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
+    },
+    "dev": { "cache": false, "persistent": true },
+    "lint": { "dependsOn": ["^build"] },
+    "typecheck": { "dependsOn": ["^build"] },
+    "test": { "dependsOn": ["^build"] }
+  }
+}
