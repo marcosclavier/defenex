@@ -22,7 +22,7 @@ const Env = z.object({
   CLOUDFLARE_BUCKET_S3_ENDPOINT: z.string().optional(),
   CLOUDFLARE_BUCKET_S3_ACCESS_KEY_ID: z.string().optional(),
   CLOUDFLARE_BUCKET_S3_SECRET_ACCESS_KEY: z.string().optional(),
-  R2_BUCKET: z.string().default("defenex-assets"),
+  R2_BUCKET: z.string().default("defenex"),
 
   NEXT_PUBLIC_APP_URL: z.string().default("http://localhost:3000"),
   SCAN_QUERY_BUDGET: z.coerce.number().default(15),
