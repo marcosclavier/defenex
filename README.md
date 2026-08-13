@@ -3,9 +3,8 @@
 Automated brand protection: find counterfeit listings, domain squatting, phishing,
 and impersonation across the open web — then take them down.
 
-- **`DEFENEX.md`** — product and business design
-- **`BUILD.md`** — full 7-milestone build plan
-- **This file** — how to run the repo
+Product design and the milestone build plan are kept in internal working docs
+outside this repository.
 
 ## Layout
 
@@ -86,7 +85,7 @@ Things that are non-obvious from the code:
   two consecutive scans flip to `removed`, which is also the proof a takedown worked.
 - **`contacts.consent_basis` is required before any outreach send.** The operator
   sends from Canada, so CASL applies and the *sender* carries the burden of proving
-  consent. Appended or pattern-guessed emails do not qualify — see `BUILD.md`.
+  consent. Appended or pattern-guessed emails do not qualify.
 
 ## Deploy
 

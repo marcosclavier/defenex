@@ -1,3 +1,11 @@
+# Internal strategy docs — deliberately not published.
+# These hold pricing, unit economics, the outreach playbook and a legal risk
+# register. The repo is public; publishing is reversible, un-publishing is not.
+DEFENEX.md
+BUILD.md
+linkedin-company-scraper.txt
+YEPAPI-SERP.txt
+
 # Secrets — must be ignored before the first commit
 .env
 .env.*
