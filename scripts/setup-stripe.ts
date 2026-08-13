@@ -88,11 +88,41 @@ async function stripe(path: string, body?: Record<string, string>): Promise<Reco
   return json;
 }
 
-async function findBySlug(slug: string) {
-  const r = (await stripe(
-    `/products/search?query=${encodeURIComponent(`metadata['defenex_plan']:'${slug}'`)}`,
-  )) as { data?: Array<{ id: string; name: string }> };
-  return r.data?.[0];
+type StripeProduct = { id: string; name: string; metadata?: Record<string, string> };
+
+let catalogue: StripeProduct[] | null = null;
+
+/**
+ * Loads existing products once, via the list endpoint.
+ *
+ * Deliberately NOT /products/search: that index is eventually consistent, so a
+ * product created seconds earlier is invisible to it. Running this script twice
+ * in quick succession therefore created a full duplicate set in a live account.
+ * The list endpoint is read-after-write consistent.
+ */
+async function loadCatalogue(): Promise<StripeProduct[]> {
+  if (catalogue) return catalogue;
+  const all: StripeProduct[] = [];
+  let startingAfter: string | undefined;
+  for (;;) {
+    const page = (await stripe(
+      `/products?limit=100&active=true${startingAfter ? `&starting_after=${startingAfter}` : ""}`,
+    )) as { data: StripeProduct[]; has_more: boolean };
+    all.push(...page.data);
+    if (!page.has_more || page.data.length === 0) break;
+    startingAfter = page.data[page.data.length - 1]!.id;
+  }
+  catalogue = all;
+  return all;
+}
+
+async function findBySlug(slug: string): Promise<StripeProduct | undefined> {
+  return (await loadCatalogue()).find((p) => p.metadata?.defenex_plan === slug);
+}
+
+/** Register a newly created product so later lookups in the same run see it. */
+function remember(product: StripeProduct, slug: string): void {
+  catalogue?.push({ ...product, metadata: { ...(product.metadata ?? {}), defenex_plan: slug } });
 }
 
 async function main() {
@@ -126,6 +156,7 @@ async function main() {
       "metadata[defenex_plan]": plan.slug,
       ...(plan.included !== undefined ? { "metadata[included_enforcements]": String(plan.included) } : {}),
     })) as { id: string };
+    remember(product, plan.slug);
 
     const prices: string[] = [];
     for (const [label, amount, interval] of [
