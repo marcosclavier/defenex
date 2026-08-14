@@ -27,7 +27,9 @@ export async function processScan(job: Job<ScanJobData>): Promise<void> {
     industry: job.data.industry,
     aliases: job.data.aliases,
     allowlistDomains: job.data.allowlistDomains,
-    queryBudget: env.SCAN_QUERY_BUDGET,
+    // Clamped downward only: a caller can ask for a cheaper scan, never a
+    // more expensive one. The field was previously accepted and ignored.
+    queryBudget: Math.min(job.data.queryBudget ?? env.SCAN_QUERY_BUDGET, env.SCAN_QUERY_BUDGET),
   });
   if (!parsed.success) {
     await updateScanProgress(scanId, {

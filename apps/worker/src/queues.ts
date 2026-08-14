@@ -18,6 +18,8 @@ export interface ScanJobData {
   stealthBudget: number;
   /** Set by the scheduler. Only scheduled scans raise alerts. */
   scheduled?: boolean;
+  /** Caller may request FEWER queries than the configured budget, never more. */
+  queryBudget?: number;
 }
 
 export interface AlertJobData {

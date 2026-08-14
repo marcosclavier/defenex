@@ -111,6 +111,10 @@ export function createApi(): Hono {
         // themselves. An anonymous scan still runs, just shallower on sites
         // that block an ordinary browser.
         stealthBudget: input.email ? env.STEALTH_BUDGET_IDENTIFIED : env.STEALTH_BUDGET_ANON,
+        // Only scheduled scans raise alerts; a user watching their own scan
+        // finish does not need an email about it.
+        scheduled: input.trigger === "scheduled",
+        ...(input.queryBudget !== undefined ? { queryBudget: input.queryBudget } : {}),
       },
       // Deterministic id: a double submit must not bill the search API twice.
       { jobId: scanJobId(scan.id) },
