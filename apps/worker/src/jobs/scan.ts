@@ -12,7 +12,7 @@ import { coreLogger, logger } from "../logger.js";
 import { dbCache, dbQuota } from "../ports.js";
 import { getFetcher } from "../browser.js";
 import { putObject, screenshotKey } from "../storage/r2.js";
-import { reportQueue, type ScanJobData } from "../queues.js";
+import { alertQueue, reportQueue, type ScanJobData } from "../queues.js";
 import { reportJobId } from "../job-ids.js";
 import { urlHashOf } from "../url.js";
 
@@ -122,6 +122,17 @@ export async function processScan(job: Job<ScanJobData>): Promise<void> {
       { scanId, email: job.data.requestedByEmail ?? null },
       { jobId: reportJobId(scanId) },
     );
+
+    // Alerts only for scheduled rescans. A user who just watched their own scan
+    // finish does not need an email telling them it finished.
+    if (job.data.scheduled && diff.changedHashes.length > 0) {
+      await alertQueue.add(
+        "alert",
+        { brandId, scanId, changedHashes: diff.changedHashes },
+        { jobId: `alert-${scanId}` },
+      );
+      log.info({ changed: diff.changedHashes.length }, "alert queued");
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     log.error({ err: message }, "scan failed");

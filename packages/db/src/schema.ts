@@ -116,10 +116,21 @@ export const brands = pgTable("brands", {
   /** First-party + authorized reseller domains, filtered before classification. */
   allowlistDomains: jsonb("allowlist_domains").$type<string[]>().notNull().default([]),
   socialHandles: jsonb("social_handles").$type<Record<string, string>>().notNull().default({}),
+  /** Owner can pause monitoring without losing history or their plan. */
+  monitoringPaused: boolean("monitoring_paused").notNull().default(false),
+  /**
+   * When the scheduler last enqueued a rescan. Tracked separately from the
+   * scans table so a user-triggered scan does not reset the schedule, and so a
+   * scan that failed to enqueue is retried on the next tick.
+   */
+  lastScheduledAt: timestamp("last_scheduled_at", { withTimezone: true }),
+  /** Suppresses alerts below this severity. Defaults to the `high` band. */
+  alertMinSeverity: integer("alert_min_severity").notNull().default(60),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
   uniqueIndex("brands_domain_idx").on(t.domain),
   index("brands_owner_idx").on(t.ownerUserId),
+  index("brands_schedule_idx").on(t.monitoringPaused, t.lastScheduledAt),
 ]);
 
 export const scans = pgTable("scans", {

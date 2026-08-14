@@ -1,4 +1,4 @@
-import { and, eq, inArray, lt, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import { getDb } from "./client.js";
 import { brands, customers, findings, queryCache, reports, scans, searchUsage, stripeEvents, users } from "./schema.js";
 
@@ -80,6 +80,7 @@ export async function reconcileFindings(
   db: Db = getDb(),
 ) {
   const now = new Date();
+  const createdOrReturned: string[] = [];
   let created = 0;
   let reappeared = 0;
 
@@ -88,8 +89,13 @@ export async function reconcileFindings(
       where: and(eq(findings.brandId, brandId), eq(findings.urlHash, row.urlHash)),
     });
 
-    if (!existing) created += 1;
-    else if (existing.status === "removed") reappeared += 1;
+    if (!existing) {
+      created += 1;
+      createdOrReturned.push(row.urlHash);
+    } else if (existing.status === "removed") {
+      reappeared += 1;
+      createdOrReturned.push(row.urlHash);
+    }
 
     await db
       .insert(findings)
@@ -134,7 +140,9 @@ export async function reconcileFindings(
     if (missed >= 2) removed += 1;
   }
 
-  return { created, reappeared, removed, total: rows.length };
+  // Hashes of findings that are new or have come back, so the caller can alert
+  // on those alone rather than on the whole standing list.
+  return { created, reappeared, removed, total: rows.length, changedHashes: createdOrReturned };
 }
 
 export async function listFindings(scanId: string, db: Db = getDb()) {
@@ -295,4 +303,144 @@ export async function claimStripeEvent(id: string, type: string, db: Db = getDb(
     .onConflictDoNothing()
     .returning();
   return inserted.length > 0;
+}
+
+// ------------------------------------------------------------ monitoring
+
+/** Rescan cadence in hours, by plan. Free brands are never scheduled. */
+export const CADENCE_HOURS: Record<string, number | null> = {
+  free: null,
+  monitor: 24 * 7,
+  protect: 24,
+  managed: 24,
+};
+
+/**
+ * Whether a brand has earned a scheduled rescan. Pure, so the rules that decide
+ * when we spend money are testable without a database.
+ *
+ * past_due still scans: Stripe retries a declined card for days, and cutting
+ * monitoring off on the first failure punishes a customer for an expired card.
+ * canceled does not, and neither does free — an unclaimed brand scanned once
+ * through the free tool must never become a recurring cost.
+ */
+export function isDueForScan(input: {
+  plan: string;
+  status: string | null;
+  monitoringPaused: boolean;
+  lastScheduledAt: Date | null;
+  now?: Date;
+}): boolean {
+  if (input.monitoringPaused) return false;
+  if (!input.status || !["active", "trialing", "past_due"].includes(input.status)) return false;
+
+  const cadence = CADENCE_HOURS[input.plan] ?? null;
+  if (cadence === null) return false;
+
+  const now = (input.now ?? new Date()).getTime();
+  const last = input.lastScheduledAt?.getTime() ?? 0;
+  return now - last >= cadence * 3600_000;
+}
+
+export interface DueBrand {
+  id: string;
+  name: string;
+  domain: string;
+  industry: string;
+  aliases: string[];
+  allowlistDomains: string[];
+  ownerUserId: string;
+  ownerEmail: string;
+  plan: string;
+}
+
+/**
+ * Brands whose next scheduled rescan is due.
+ *
+ * Only owned brands on a paying plan are eligible: an unclaimed brand scanned
+ * once through the free scanner must never turn into a recurring cost.
+ */
+export async function listBrandsDueForScan(limit = 50, db: Db = getDb()): Promise<DueBrand[]> {
+  const rows = await db
+    .select({
+      id: brands.id,
+      name: brands.name,
+      domain: brands.domain,
+      industry: brands.industry,
+      aliases: brands.aliases,
+      allowlistDomains: brands.allowlistDomains,
+      ownerUserId: brands.ownerUserId,
+      ownerEmail: users.email,
+      plan: customers.plan,
+      status: customers.status,
+      lastScheduledAt: brands.lastScheduledAt,
+    })
+    .from(brands)
+    .innerJoin(users, eq(brands.ownerUserId, users.id))
+    .innerJoin(customers, eq(customers.userId, users.id))
+    .where(eq(brands.monitoringPaused, false))
+    .limit(500);
+
+  const now = Date.now();
+  const due: DueBrand[] = [];
+
+  for (const r of rows) {
+    if (!r.ownerUserId) continue;
+    if (!isDueForScan({
+      plan: r.plan,
+      status: r.status,
+      monitoringPaused: false, // already filtered in SQL
+      lastScheduledAt: r.lastScheduledAt,
+      now: new Date(now),
+    })) continue;
+
+    due.push({
+      id: r.id,
+      name: r.name,
+      domain: r.domain,
+      industry: r.industry,
+      aliases: r.aliases,
+      allowlistDomains: r.allowlistDomains,
+      ownerUserId: r.ownerUserId,
+      ownerEmail: r.ownerEmail,
+      plan: r.plan,
+    });
+    if (due.length >= limit) break;
+  }
+
+  return due;
+}
+
+/** Claim the slot before enqueueing, so a crash cannot double-charge a scan. */
+export async function markScheduled(brandId: string, db: Db = getDb()) {
+  await db.update(brands).set({ lastScheduledAt: new Date() }).where(eq(brands.id, brandId));
+}
+
+export async function setMonitoringPaused(brandId: string, userId: string, paused: boolean, db: Db = getDb()) {
+  const updated = await db
+    .update(brands)
+    .set({ monitoringPaused: paused })
+    .where(and(eq(brands.id, brandId), eq(brands.ownerUserId, userId)))
+    .returning();
+  return updated.length > 0;
+}
+
+/** Findings from this scan that are new or returned, above the alert threshold. */
+export async function alertableFindings(
+  brandId: string,
+  scanId: string,
+  changedHashes: string[],
+  minSeverity: number,
+  db: Db = getDb(),
+) {
+  if (changedHashes.length === 0) return [];
+  return db.query.findings.findMany({
+    where: and(
+      eq(findings.brandId, brandId),
+      eq(findings.scanId, scanId),
+      inArray(findings.urlHash, changedHashes),
+      gte(findings.severity, minSeverity),
+    ),
+    orderBy: (f, { desc }) => [desc(f.severity)],
+  });
 }

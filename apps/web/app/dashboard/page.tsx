@@ -5,6 +5,7 @@ import { Header, Footer } from "@/components/Shell";
 import { getSession } from "@/lib/session";
 import { getDashboard } from "@/lib/worker";
 import { ClaimForm } from "./ClaimForm";
+import { MonitoringToggle } from "./MonitoringToggle";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Dashboard", robots: { index: false } };
@@ -83,6 +84,10 @@ export default async function Dashboard() {
                       {b.findings.high > 0 && <span className="text-high">{b.findings.high} high</span>}
                       <span className="text-ink-mute">{b.findings.total} open</span>
                     </div>
+                  </div>
+
+                  <div className="mt-3">
+                    <MonitoringToggle brandId={b.id} paused={b.monitoringPaused} plan={data.plan} />
                   </div>
 
                   {b.scans.length > 0 && (

@@ -3,20 +3,31 @@ import { closeDb } from "@defenex/db";
 import { env } from "./env.js";
 import { logger } from "./logger.js";
 import { createApi } from "./api.js";
-import { closeQueues, startWorkers } from "./queues.js";
+import { closeQueues, startScheduler, startWorkers } from "./queues.js";
 import { processScan } from "./jobs/scan.js";
 import { processReport } from "./jobs/report.js";
+import { processAlert } from "./jobs/alert.js";
+import { processSchedule } from "./jobs/schedule.js";
 import { closeBrowser } from "./browser.js";
 
 const server = serve({ fetch: createApi().fetch, port: env.PORT }, (info) =>
   logger.info({ port: info.port }, "worker listening"),
 );
 
-startWorkers({ scan: processScan, report: processReport });
+startWorkers({
+  scan: processScan,
+  report: processReport,
+  alert: processAlert,
+  schedule: processSchedule,
+});
 logger.info(
   { scanConcurrency: env.SCAN_CONCURRENCY, reportConcurrency: env.REPORT_CONCURRENCY },
   "queue workers started",
 );
+
+void startScheduler(env.SCHEDULE_INTERVAL_MINUTES)
+  .then(() => logger.info({ everyMinutes: env.SCHEDULE_INTERVAL_MINUTES }, "scheduler registered"))
+  .catch((err) => logger.error({ err: String(err) }, "scheduler registration failed"));
 
 /**
  * Railway sends SIGTERM on every redeploy.

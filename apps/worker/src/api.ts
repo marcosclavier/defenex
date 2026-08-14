@@ -7,7 +7,7 @@ import { severityLabel } from "@defenex/core";
 import {
   brands, claimBrand, claimStripeEvent, countOpenFindings, createScan, getCustomer, getDb,
   getReportByScanId, getReportByToken, getScan, listBrandsForUser, listFindings,
-  listScansForBrand, upsertBrand, upsertCustomer,
+  listScansForBrand, setMonitoringPaused, upsertBrand, upsertCustomer,
 } from "@defenex/db";
 import { render } from "@react-email/render";
 import { MagicLink } from "@defenex/emails";
@@ -247,6 +247,7 @@ export function createApi(): Hono {
         name: b.name,
         domain: b.domain,
         industry: b.industry,
+        monitoringPaused: b.monitoringPaused,
         findings: await countOpenFindings(b.id),
         scans: (await listScansForBrand(b.id, 5)).map((s) => ({
           id: s.id,
@@ -284,6 +285,21 @@ export function createApi(): Hono {
     }
     logger.info({ userId: parsed.data.userId, domain: parsed.data.domain }, "brand claimed");
     return c.json({ brand: { id: result.brand.id, name: result.brand.name, domain: result.brand.domain } });
+  });
+
+  api.post("/brands/:id/monitoring", async (c) => {
+    const parsed = z
+      .object({ userId: z.uuid(), paused: z.boolean() })
+      .safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: "invalid_request" }, 400);
+
+    // Scoped to the owner: setMonitoringPaused matches on brand AND user, so a
+    // valid session cannot pause someone else's monitoring.
+    const ok = await setMonitoringPaused(c.req.param("id"), parsed.data.userId, parsed.data.paused);
+    if (!ok) return c.json({ error: "not_found" }, 404);
+
+    logger.info({ brandId: c.req.param("id"), paused: parsed.data.paused }, "monitoring toggled");
+    return c.json({ paused: parsed.data.paused });
   });
 
   api.post("/billing/sync", async (c) => {

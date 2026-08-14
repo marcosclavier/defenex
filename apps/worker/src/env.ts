@@ -46,6 +46,10 @@ const Env = z.object({
   STEALTH_BUDGET_ANON: z.coerce.number().default(2),
   STEALTH_BUDGET_IDENTIFIED: z.coerce.number().default(8),
   SCAN_CONCURRENCY: z.coerce.number().default(2),
+  /** Brands enqueued per scheduler tick. Caps the spend a single tick can cause. */
+  SCHEDULE_BATCH_SIZE: z.coerce.number().default(25),
+  /** How often the scheduler looks for due rescans. */
+  SCHEDULE_INTERVAL_MINUTES: z.coerce.number().default(60),
   REPORT_CONCURRENCY: z.coerce.number().default(3),
 });
 

@@ -122,6 +122,7 @@ export interface DashboardBrand {
   name: string;
   domain: string;
   industry: string;
+  monitoringPaused: boolean;
   findings: { total: number; critical: number; high: number };
   scans: Array<{
     id: string;
@@ -177,5 +178,12 @@ export function syncBilling(payload: BillingSync) {
   return call<{ applied: boolean }>("/api/billing/sync", {
     method: "POST",
     body: JSON.stringify(payload),
+  });
+}
+
+export function setMonitoring(brandId: string, userId: string, paused: boolean) {
+  return call<{ paused: boolean }>(`/api/brands/${encodeURIComponent(brandId)}/monitoring`, {
+    method: "POST",
+    body: JSON.stringify({ userId, paused }),
   });
 }
