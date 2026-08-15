@@ -87,13 +87,20 @@ export const subscriptionStatusEnum = pgEnum("subscription_status", [
 
 export const takedownStatusEnum = pgEnum("takedown_status", [
   "draft",
+  "capturing_evidence",
+  /** Capture failed, so there is no image to file with. Never auto-submitted. */
+  "blocked_no_evidence",
   "pending_approval",
+  /** An admin declined to file it. Costs the customer nothing. */
+  "declined",
   "submitted",
   "accepted",
   "rejected",
   "removed",
   "escalated",
 ]);
+
+export const rightsStatusEnum = pgEnum("rights_status", ["pending", "verified", "rejected"]);
 
 // ---------------------------------------------------------------- core
 
@@ -250,30 +257,60 @@ export const suppressions = pgTable("suppressions", {
 
 // ---------------------------------------------------------------- takedowns (M6)
 
+/**
+ * Proof that a customer owns or represents the mark, required before any notice
+ * is filed. §512(f) makes a knowingly false notice actionable, so this gate is
+ * enforced in the service layer rather than only in the UI.
+ */
 export const rightsVerifications = pgTable("rights_verifications", {
   id: uuid("id").defaultRandom().primaryKey(),
   brandId: uuid("brand_id").notNull().references(() => brands.id, { onDelete: "cascade" }),
   regNumber: text("reg_number").notNull(),
-  jurisdiction: text("jurisdiction").notNull(),
+  jurisdiction: text("jurisdiction").notNull().default("US"),
   registryUrl: text("registry_url"),
+  /** Uploaded certificate in R2. */
   documentKey: text("document_key"),
+  status: rightsStatusEnum("status").notNull().default("pending"),
+  /**
+   * What the register said at submission time: mark text, owner, live status.
+   * Advisory only — it proves the registration exists, not that the requester
+   * owns it, which is why a human still confirms.
+   */
+  registrySnapshot: jsonb("registry_snapshot").$type<Record<string, unknown>>(),
+  submittedByUserId: uuid("submitted_by_user_id").references(() => users.id),
   verifiedByUserId: uuid("verified_by_user_id").references(() => users.id),
   verifiedAt: timestamp("verified_at", { withTimezone: true }),
-}, (t) => [index("rights_brand_idx").on(t.brandId)]);
+  rejectedReason: text("rejected_reason"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index("rights_brand_idx").on(t.brandId),
+  uniqueIndex("rights_brand_reg_idx").on(t.brandId, t.regNumber),
+]);
 
 export const takedowns = pgTable("takedowns", {
   id: uuid("id").defaultRandom().primaryKey(),
   findingId: uuid("finding_id").notNull().references(() => findings.id, { onDelete: "cascade" }),
+  brandId: uuid("brand_id").notNull().references(() => brands.id, { onDelete: "cascade" }),
+  requestedByUserId: uuid("requested_by_user_id").references(() => users.id),
+  /** The rights record that authorised this filing, captured at request time. */
+  rightsVerificationId: uuid("rights_verification_id").references(() => rightsVerifications.id),
   channel: text("channel").notNull(),
   noticeBody: text("notice_body"),
   evidenceBundleKey: text("evidence_bundle_key"),
   status: takedownStatusEnum("status").notNull().default("draft"),
   /** Never null once submitted — a human signs every notice. */
   approvedByUserId: uuid("approved_by_user_id").references(() => users.id),
+  declinedReason: text("declined_reason"),
+  /** Where the notice went: an email address, or the portal URL used. */
+  submittedTo: text("submitted_to"),
   submittedAt: timestamp("submitted_at", { withTimezone: true }),
   resolvedAt: timestamp("resolved_at", { withTimezone: true }),
   outcomeNote: text("outcome_note"),
-}, (t) => [index("takedowns_finding_idx").on(t.findingId)]);
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  index("takedowns_finding_idx").on(t.findingId),
+  index("takedowns_brand_status_idx").on(t.brandId, t.status),
+]);
 
 // ---------------------------------------------------------------- ops
 

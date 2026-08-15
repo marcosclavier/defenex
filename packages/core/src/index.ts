@@ -24,3 +24,9 @@ export {
 export { verifyEvidence, isProbative } from "./classify/verify.js";
 export { severityFor, priorScore, severityLabel, SEVERITY_BANDS } from "./score/index.js";
 export { runScan, type RunScanOptions } from "./scan.js";
+export {
+  UsptoClient,
+  parseTsdr,
+  normalizeRegNumber,
+  type RegistrationRecord,
+} from "./rights/uspto.js";

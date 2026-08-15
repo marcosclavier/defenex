@@ -13,6 +13,12 @@ const Env = z.object({
 
   YEPAPI_API_KEY: z.string().min(1),
   GEMINI_API_KEY: z.string().min(1),
+  /**
+   * USPTO TSDR key for the advisory rights pre-check. Optional: without it the
+   * admin can still verify a registration manually against the public register,
+   * which is the authoritative step regardless.
+   */
+  USPTO_API_KEY: z.string().optional(),
   RESEND_API_KEY: z.string().min(1).optional(),
   /**
    * Sending domain for transactional mail. Must be verified in Resend or every

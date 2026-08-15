@@ -86,8 +86,14 @@ export default async function Dashboard() {
                     </div>
                   </div>
 
-                  <div className="mt-3">
+                  <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2">
                     <MonitoringToggle brandId={b.id} paused={b.monitoringPaused} plan={data.plan} />
+                    <Link
+                      href={`/dashboard/brands/${b.id}/rights`}
+                      className="font-mono text-xs text-ink-mute underline underline-offset-4 transition-colors hover:text-ink-dim"
+                    >
+                      Trademark rights
+                    </Link>
                   </div>
 
                   {b.scans.length > 0 && (

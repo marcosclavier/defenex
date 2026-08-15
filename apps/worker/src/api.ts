@@ -5,14 +5,16 @@ import { eq } from "drizzle-orm";
 import { ScanInput } from "@defenex/shared";
 import { severityLabel } from "@defenex/core";
 import {
-  brands, claimBrand, claimStripeEvent, countOpenFindings, createScan, getCustomer, getDb,
-  getReportByScanId, getReportByToken, getScan, listBrandsForUser, listFindings,
-  listScansForBrand, setMonitoringPaused, upsertBrand, upsertCustomer,
+  brands, claimBrand, claimStripeEvent, countOpenFindings, createScan, decideRightsClaim,
+  getCustomer, getDb, getReportByScanId, getReportByToken, getScan, getUserById,
+  listBrandsForUser, listFindings, listPendingRights, listRightsForBrand, listScansForBrand,
+  setMonitoringPaused, submitRightsClaim, upsertBrand, upsertCustomer,
 } from "@defenex/db";
 import { render } from "@react-email/render";
 import { MagicLink } from "@defenex/emails";
 import { Resend } from "resend";
 import { createAuth } from "./auth.js";
+import { UsptoClient, RightsLookupError } from "@defenex/core";
 import { env } from "./env.js";
 import { logger } from "./logger.js";
 import { redisClient, scanQueue } from "./queues.js";
@@ -304,6 +306,114 @@ export function createApi(): Hono {
 
     logger.info({ brandId: c.req.param("id"), paused: parsed.data.paused }, "monitoring toggled");
     return c.json({ paused: parsed.data.paused });
+  });
+
+  // ------------------------------------------------------------ rights
+
+  /**
+   * Admin checks are re-verified here against the database rather than trusted
+   * from the caller. The web app is the only client and already checks the
+   * session, but an authorisation decision should not rest on a single layer.
+   */
+  async function requireAdmin(userId: string): Promise<boolean> {
+    const user = await getUserById(userId);
+    return Boolean(user?.isAdmin);
+  }
+
+  api.post("/brands/:id/rights", async (c) => {
+    const parsed = z
+      .object({
+        userId: z.uuid(),
+        regNumber: z.string().min(4).max(20),
+        jurisdiction: z.string().min(2).max(8).default("US"),
+        documentKey: z.string().optional(),
+      })
+      .safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: "invalid_request" }, 400);
+    const input = parsed.data;
+
+    const brand = await getDb().query.brands.findFirst({ where: eq(brands.id, c.req.param("id")) });
+    if (!brand || brand.ownerUserId !== input.userId) return c.json({ error: "not_found" }, 404);
+
+    // Advisory lookup. A failure here must not block submission — the human
+    // review is the authoritative step, and USPTO is frequently unavailable.
+    let snapshot: Record<string, unknown> | null = null;
+    let registryUrl: string | null = null;
+    let lookupError: string | null = null;
+
+    if (input.jurisdiction.toUpperCase() === "US" && env.USPTO_API_KEY) {
+      try {
+        const record = await new UsptoClient({ apiKey: env.USPTO_API_KEY }).lookup(input.regNumber);
+        snapshot = {
+          markText: record.markText,
+          ownerName: record.ownerName,
+          statusText: record.statusText,
+          isLive: record.isLive,
+          registrationDate: record.registrationDate,
+          checkedAt: new Date().toISOString(),
+        };
+        registryUrl = record.registryUrl;
+      } catch (err) {
+        lookupError = err instanceof RightsLookupError ? err.message : "registry lookup failed";
+        logger.warn({ err: lookupError }, "rights lookup failed");
+      }
+    }
+
+    const claim = await submitRightsClaim({
+      brandId: brand.id,
+      regNumber: input.regNumber,
+      jurisdiction: input.jurisdiction.toUpperCase(),
+      submittedByUserId: input.userId,
+      registryUrl,
+      documentKey: input.documentKey ?? null,
+      registrySnapshot: snapshot,
+    });
+
+    logger.info({ brandId: brand.id, regNumber: input.regNumber }, "rights claim submitted");
+    return c.json({ claim: { id: claim.id, status: claim.status }, registry: snapshot, lookupError });
+  });
+
+  api.get("/brands/:id/rights", async (c) => {
+    const rows = await listRightsForBrand(c.req.param("id"));
+    return c.json({
+      rights: rows.map((r) => ({
+        id: r.id,
+        regNumber: r.regNumber,
+        jurisdiction: r.jurisdiction,
+        status: r.status,
+        registryUrl: r.registryUrl,
+        registrySnapshot: r.registrySnapshot,
+        rejectedReason: r.rejectedReason,
+        createdAt: r.createdAt,
+      })),
+    });
+  });
+
+  api.get("/admin/rights", async (c) => {
+    const userId = c.req.query("userId") ?? "";
+    if (!(await requireAdmin(userId))) return c.json({ error: "not_found" }, 404);
+    return c.json({ pending: await listPendingRights() });
+  });
+
+  api.post("/admin/rights/:id/decide", async (c) => {
+    const parsed = z
+      .object({ userId: z.uuid(), verified: z.boolean(), reason: z.string().max(500).optional() })
+      .safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: "invalid_request" }, 400);
+    if (!(await requireAdmin(parsed.data.userId))) return c.json({ error: "not_found" }, 404);
+
+    const row = await decideRightsClaim(c.req.param("id"), {
+      verified: parsed.data.verified,
+      adminUserId: parsed.data.userId,
+      ...(parsed.data.reason ? { reason: parsed.data.reason } : {}),
+    });
+    if (!row) return c.json({ error: "not_found" }, 404);
+
+    logger.info(
+      { rightsId: row.id, verified: parsed.data.verified, by: parsed.data.userId },
+      "rights decision recorded",
+    );
+    return c.json({ status: row.status });
   });
 
   api.post("/billing/sync", async (c) => {

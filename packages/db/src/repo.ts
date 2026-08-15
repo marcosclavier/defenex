@@ -1,6 +1,9 @@
-import { and, eq, gte, inArray, lt, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, lt, not, sql } from "drizzle-orm";
 import { getDb } from "./client.js";
-import { brands, customers, findings, queryCache, reports, scans, searchUsage, stripeEvents, users } from "./schema.js";
+import {
+  brands, customers, findings, queryCache, reports, rightsVerifications, scans,
+  searchUsage, stripeEvents, takedowns, users,
+} from "./schema.js";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -443,4 +446,183 @@ export async function alertableFindings(
     ),
     orderBy: (f, { desc }) => [desc(f.severity)],
   });
+}
+
+// ------------------------------------------------------------ rights
+
+export async function submitRightsClaim(
+  input: {
+    brandId: string;
+    regNumber: string;
+    jurisdiction: string;
+    submittedByUserId: string;
+    registryUrl?: string | null;
+    documentKey?: string | null;
+    registrySnapshot?: Record<string, unknown> | null;
+  },
+  db: Db = getDb(),
+) {
+  const [row] = await db
+    .insert(rightsVerifications)
+    .values({
+      brandId: input.brandId,
+      regNumber: input.regNumber,
+      jurisdiction: input.jurisdiction,
+      submittedByUserId: input.submittedByUserId,
+      registryUrl: input.registryUrl ?? null,
+      documentKey: input.documentKey ?? null,
+      registrySnapshot: input.registrySnapshot ?? null,
+      status: "pending",
+    })
+    .onConflictDoUpdate({
+      target: [rightsVerifications.brandId, rightsVerifications.regNumber],
+      set: {
+        registryUrl: input.registryUrl ?? null,
+        documentKey: input.documentKey ?? null,
+        registrySnapshot: input.registrySnapshot ?? null,
+        // Re-submitting returns the claim to pending; a previously rejected
+        // claim must be re-reviewed rather than silently staying rejected.
+        status: "pending",
+        rejectedReason: null,
+      },
+    })
+    .returning();
+  return row!;
+}
+
+export async function decideRightsClaim(
+  id: string,
+  decision: { verified: boolean; adminUserId: string; reason?: string },
+  db: Db = getDb(),
+) {
+  const [row] = await db
+    .update(rightsVerifications)
+    .set({
+      status: decision.verified ? "verified" : "rejected",
+      verifiedByUserId: decision.adminUserId,
+      verifiedAt: decision.verified ? new Date() : null,
+      rejectedReason: decision.verified ? null : (decision.reason ?? "not stated"),
+    })
+    .where(eq(rightsVerifications.id, id))
+    .returning();
+  return row ?? null;
+}
+
+/**
+ * The gate. No notice may be drafted or filed for a brand without a verified
+ * registration, and this is checked in the service layer rather than the UI.
+ */
+export async function verifiedRightsFor(brandId: string, db: Db = getDb()) {
+  return db.query.rightsVerifications.findFirst({
+    where: and(eq(rightsVerifications.brandId, brandId), eq(rightsVerifications.status, "verified")),
+  });
+}
+
+export async function listRightsForBrand(brandId: string, db: Db = getDb()) {
+  return db.query.rightsVerifications.findMany({
+    where: eq(rightsVerifications.brandId, brandId),
+    orderBy: (r, { desc }) => [desc(r.createdAt)],
+  });
+}
+
+export async function listPendingRights(db: Db = getDb()) {
+  return db.query.rightsVerifications.findMany({
+    where: eq(rightsVerifications.status, "pending"),
+    orderBy: (r, { asc }) => [asc(r.createdAt)],
+    limit: 100,
+  });
+}
+
+// ------------------------------------------------------------ takedowns
+
+export type TakedownRefusal =
+  | "not_found"
+  | "not_owner"
+  | "no_verified_rights"
+  | "allowance_exhausted"
+  | "already_requested";
+
+/**
+ * Creates a takedown request, refusing rather than proceeding when any
+ * precondition fails. Every refusal here is deliberate:
+ *
+ * - `no_verified_rights` is the §512(f) gate.
+ * - `allowance_exhausted` stops silent overage billing.
+ * - `already_requested` stops a double click spending two enforcements.
+ */
+export async function requestTakedown(
+  input: { findingId: string; userId: string },
+  db: Db = getDb(),
+): Promise<{ ok: true; takedownId: string } | { ok: false; reason: TakedownRefusal }> {
+  const finding = await db.query.findings.findFirst({ where: eq(findings.id, input.findingId) });
+  if (!finding) return { ok: false, reason: "not_found" };
+
+  const brand = await db.query.brands.findFirst({ where: eq(brands.id, finding.brandId) });
+  if (!brand || brand.ownerUserId !== input.userId) return { ok: false, reason: "not_owner" };
+
+  const rights = await verifiedRightsFor(brand.id, db);
+  if (!rights) return { ok: false, reason: "no_verified_rights" };
+
+  const existing = await db.query.takedowns.findFirst({
+    where: and(
+      eq(takedowns.findingId, input.findingId),
+      not(inArray(takedowns.status, ["declined", "rejected"])),
+    ),
+  });
+  if (existing) return { ok: false, reason: "already_requested" };
+
+  const customer = await getCustomer(input.userId, db);
+  const used = customer?.enforcementsUsed ?? 0;
+  const included = customer?.enforcementsIncluded ?? 0;
+  if (used >= included) return { ok: false, reason: "allowance_exhausted" };
+
+  const [row] = await db
+    .insert(takedowns)
+    .values({
+      findingId: finding.id,
+      brandId: brand.id,
+      requestedByUserId: input.userId,
+      rightsVerificationId: rights.id,
+      channel: "unresolved",
+      status: "draft",
+    })
+    .returning();
+
+  return { ok: true, takedownId: row!.id };
+}
+
+export async function getTakedown(id: string, db: Db = getDb()) {
+  return db.query.takedowns.findFirst({ where: eq(takedowns.id, id) });
+}
+
+export async function updateTakedown(
+  id: string,
+  patch: Partial<typeof takedowns.$inferInsert>,
+  db: Db = getDb(),
+) {
+  const [row] = await db.update(takedowns).set(patch).where(eq(takedowns.id, id)).returning();
+  return row ?? null;
+}
+
+export async function listTakedownsForBrand(brandId: string, db: Db = getDb()) {
+  return db.query.takedowns.findMany({
+    where: eq(takedowns.brandId, brandId),
+    orderBy: (t, { desc }) => [desc(t.createdAt)],
+  });
+}
+
+export async function listTakedownsAwaitingApproval(db: Db = getDb()) {
+  return db.query.takedowns.findMany({
+    where: inArray(takedowns.status, ["pending_approval", "blocked_no_evidence"]),
+    orderBy: (t, { asc }) => [asc(t.createdAt)],
+    limit: 100,
+  });
+}
+
+/** Spent on submission, never on request, so a declined draft costs nothing. */
+export async function consumeEnforcement(userId: string, db: Db = getDb()) {
+  await db
+    .update(customers)
+    .set({ enforcementsUsed: sql`${customers.enforcementsUsed} + 1` })
+    .where(eq(customers.userId, userId));
 }

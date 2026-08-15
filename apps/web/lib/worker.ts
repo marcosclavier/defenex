@@ -187,3 +187,53 @@ export function setMonitoring(brandId: string, userId: string, paused: boolean) 
     body: JSON.stringify({ userId, paused }),
   });
 }
+
+// ------------------------------------------------------------ rights
+
+export interface RightsClaim {
+  id: string;
+  regNumber: string;
+  jurisdiction: string;
+  status: "pending" | "verified" | "rejected";
+  registryUrl: string | null;
+  registrySnapshot: {
+    markText?: string | null;
+    ownerName?: string | null;
+    statusText?: string | null;
+    isLive?: boolean;
+    registrationDate?: string | null;
+  } | null;
+  rejectedReason: string | null;
+  createdAt: string;
+}
+
+export function submitRights(
+  brandId: string,
+  input: { userId: string; regNumber: string; jurisdiction: string },
+) {
+  return call<{
+    claim: { id: string; status: string };
+    registry: RightsClaim["registrySnapshot"];
+    lookupError: string | null;
+  }>(`/api/brands/${encodeURIComponent(brandId)}/rights`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function listRights(brandId: string) {
+  return call<{ rights: RightsClaim[] }>(`/api/brands/${encodeURIComponent(brandId)}/rights`);
+}
+
+export function listPendingRights(userId: string) {
+  return call<{ pending: Array<Record<string, unknown>> }>(
+    `/api/admin/rights?userId=${encodeURIComponent(userId)}`,
+  );
+}
+
+export function decideRights(id: string, userId: string, verified: boolean, reason?: string) {
+  return call<{ status: string }>(`/api/admin/rights/${encodeURIComponent(id)}/decide`, {
+    method: "POST",
+    body: JSON.stringify({ userId, verified, ...(reason ? { reason } : {}) }),
+  });
+}

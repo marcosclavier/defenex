@@ -33,3 +33,12 @@ export class BlockedUrlError extends Error {
     this.name = "BlockedUrlError";
   }
 }
+
+/** A rights register could not confirm a registration. */
+export class RightsLookupError extends Error {
+  readonly code = "RIGHTS_LOOKUP";
+  constructor(message: string) {
+    super(message);
+    this.name = "RightsLookupError";
+  }
+}
