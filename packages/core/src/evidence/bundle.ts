@@ -39,6 +39,11 @@ export interface EvidenceManifest {
   pageTitle: string | null;
   capturedAt: string;
   capturedBy: string;
+  /**
+   * Whether the image is a photograph of the live page or our rendering of
+   * markup the origin served. Recorded because they are different claims.
+   */
+  captureMethod: string;
   screenshotFullPage: boolean;
   responseHeaders: Record<string, string>;
   registrar: {
@@ -71,6 +76,7 @@ export interface BundleInput {
     finalUrl: string | null;
     httpStatus: number | null;
     pageTitle: string | null;
+    captureMethod?: string;
     screenshotFullPage: boolean;
     responseHeaders: Record<string, string>;
     artifacts: EvidenceArtifact[];
@@ -112,6 +118,7 @@ export function buildEvidenceBundle(input: BundleInput): EvidenceBundle {
     pageTitle: capture.pageTitle,
     capturedAt: capture.capturedAt,
     capturedBy: input.capturedBy ?? "defenex-evidence/1",
+    captureMethod: capture.captureMethod ?? "direct-browser",
     screenshotFullPage: capture.screenshotFullPage,
     responseHeaders: capture.responseHeaders,
     registrar: input.rdapDomain

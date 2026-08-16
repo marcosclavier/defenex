@@ -8,15 +8,22 @@ import {
 import { assertUrlIsFetchable } from "./ssrf.js";
 import { BlockedUrlError } from "../errors.js";
 import { silentLogger, type Logger } from "../ports.js";
-import type { StealthScraper } from "./stealth.js";
+import type { ScrapeProvider } from "./scrape.js";
 
 export interface FetcherOptions {
   timeoutMs?: number;
   screenshot?: boolean;
   logger?: Logger;
   userAgent?: string;
-  /** Tier-2 fetcher for sites that block a headless browser. */
-  stealth?: StealthScraper;
+  /**
+   * Tier-2 fetcher for sites that block a headless browser.
+   *
+   * Still called `stealth` throughout: the name came from the first provider's
+   * product, and it is baked into the budget vocabulary and into the
+   * `evidence_source` enum in the database. Renaming it would need a migration
+   * for no behavioural gain.
+   */
+  stealth?: ScrapeProvider;
 }
 
 /**
@@ -75,7 +82,7 @@ export class PageFetcher {
   private readonly wantScreenshot: boolean;
   private readonly log: Logger;
   private readonly userAgent: string;
-  private readonly stealth: StealthScraper | undefined;
+  private readonly stealth: ScrapeProvider | undefined;
 
   constructor(opts: FetcherOptions = {}) {
     this.timeoutMs = opts.timeoutMs ?? 20_000;

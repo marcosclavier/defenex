@@ -9,7 +9,7 @@ import {
 } from "@defenex/core";
 import { getFinding, getTakedown, updateTakedown } from "@defenex/db";
 import { coreLogger, logger } from "../logger.js";
-import { getFetcher } from "../browser.js";
+import { getEvidenceScraper, getFetcher } from "../browser.js";
 import { putObject } from "../storage/r2.js";
 import { evidenceBundleKey } from "../storage/keys.js";
 import { draftQueue, type EvidenceJobData } from "../queues.js";
@@ -60,6 +60,10 @@ export async function processEvidence(job: Job<EvidenceJobData>): Promise<void> 
     url: finding.url,
     browser: await getFetcher().browserHandle(),
     logger: coreLogger,
+    // Sites worth filing against are the ones that block us hardest, so the
+    // paid tier is not a luxury here — without it the highest-severity
+    // findings would be permanently unenforceable.
+    scraper: getEvidenceScraper(),
   });
 
   if (!capture.ok) {
@@ -114,6 +118,7 @@ export async function processEvidence(job: Job<EvidenceJobData>): Promise<void> 
       bytes: bundle.zip.byteLength,
       artifacts: bundle.manifest.artifacts.length,
       fullPage: capture.screenshotFullPage,
+      method: capture.captureMethod,
       registrar: bundle.manifest.registrar?.name ?? null,
       host: bundle.manifest.host?.operator ?? null,
       lookupErrors: lookupErrors.length,

@@ -5,6 +5,7 @@ import { YepApiClient } from "./search/yepapi.js";
 import { GeminiClassifier } from "./classify/gemini.js";
 import { PageFetcher } from "./enrich/fetch.js";
 import { StealthScraper } from "./enrich/stealth.js";
+import { SpiderScraper } from "./enrich/spider.js";
 import { runScan } from "./scan.js";
 import { severityLabel } from "./score/index.js";
 import { QuotaExceededError, SearchConfigError } from "./errors.js";
@@ -101,9 +102,13 @@ async function main(): Promise<void> {
     apiKey: process.env.GEMINI_API_KEY ?? "",
     logger,
   });
+  // Same provider selection as the worker, so a gate run exercises what
+  // production would actually do rather than a second code path.
   const stealth = values["no-stealth"]
     ? undefined
-    : new StealthScraper({ apiKey: process.env.YEPAPI_API_KEY ?? "", logger });
+    : process.env.SPIDER_CLOUD_API_KEY
+      ? new SpiderScraper({ apiKey: process.env.SPIDER_CLOUD_API_KEY, logger })
+      : new StealthScraper({ apiKey: process.env.YEPAPI_API_KEY ?? "", logger });
   const fetcher = new PageFetcher({
     logger,
     screenshot: true,

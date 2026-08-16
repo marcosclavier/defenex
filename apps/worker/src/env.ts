@@ -12,6 +12,25 @@ const Env = z.object({
   REDIS_URL: z.string().min(1),
 
   YEPAPI_API_KEY: z.string().min(1),
+  /**
+   * spider.cloud. Roughly a fortieth of the price of the YepAPI stealth tier
+   * and several times faster, and it returns page HTML, which is what lets
+   * evidence capture photograph a site that refuses our own browser.
+   */
+  SPIDER_CLOUD_API_KEY: z.string().optional(),
+
+  /**
+   * Which provider the *scanner* uses for its paid tier.
+   *
+   * Deliberately separate from the key. Evidence capture can adopt spider
+   * safely — it only ever runs on findings that would otherwise be marked
+   * `blocked_no_evidence`, so the worst case is no change. The scanner is a
+   * different matter: the paid tier decides what text the classifier reads and
+   * therefore what counts as a finding, so switching it re-opens detection
+   * quality and must not happen until the gate brands have been re-run against
+   * the recorded baselines. One variable, flipped once, after that passes.
+   */
+  SCAN_FETCH_PROVIDER: z.enum(["yepapi", "spider"]).default("yepapi"),
   GEMINI_API_KEY: z.string().min(1),
   /**
    * USPTO TSDR key for the advisory rights pre-check. Optional: without it the
@@ -64,12 +83,17 @@ const Env = z.object({
   SEARCH_DEPTH: z.coerce.number().default(50),
   SEARCH_DAILY_CAP: z.coerce.number().default(5000),
   /**
-   * Paid stealth calls per scan, by tier. Anonymous scans get a small
-   * allowance so they still return something useful on bot-blocked
-   * marketplaces, without letting an unidentified visitor spend $0.30 a click.
+   * Paid fetch calls per scan, by tier. Anonymous scans get a small allowance
+   * so they still return something useful on bot-blocked marketplaces, without
+   * letting an unidentified visitor run up the bill.
+   *
+   * Raised from 2 and 8 when the tier moved to spider: at roughly $0.0007 a
+   * call rather than $0.03, thirty calls costs about two cents and latency
+   * becomes the binding constraint rather than money. Lower these if the
+   * provider falls back to YepAPI.
    */
-  STEALTH_BUDGET_ANON: z.coerce.number().default(2),
-  STEALTH_BUDGET_IDENTIFIED: z.coerce.number().default(8),
+  STEALTH_BUDGET_ANON: z.coerce.number().default(6),
+  STEALTH_BUDGET_IDENTIFIED: z.coerce.number().default(30),
   SCAN_CONCURRENCY: z.coerce.number().default(2),
   /** Brands enqueued per scheduler tick. Caps the spend a single tick can cause. */
   SCHEDULE_BATCH_SIZE: z.coerce.number().default(25),
