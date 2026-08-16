@@ -42,6 +42,14 @@ const Env = z.object({
   NOTICE_AGENT_PHONE: z.string().optional(),
   NOTICE_AGENT_ADDRESS: z.string().optional(),
 
+  /**
+   * Error reporting. Optional so a missing DSN degrades to logs rather than
+   * refusing to boot — but a system that files legal notices should have one set.
+   */
+  SENTRY_DSN: z.string().optional(),
+  SENTRY_ENVIRONMENT: z.string().optional(),
+  SENTRY_TRACES_SAMPLE_RATE: z.coerce.number().min(0).max(1).default(0),
+
   // Shared secret with the Vercel app. Without it the API is unauthenticated,
   // so the server refuses to start rather than exposing an open endpoint.
   WORKER_API_SECRET: z.string().min(24),

@@ -20,6 +20,7 @@ import { createAuth } from "./auth.js";
 import { UsptoClient, RightsLookupError, prepareForSubmission, type NoticeKind } from "@defenex/core";
 import { env } from "./env.js";
 import { logger } from "./logger.js";
+import { captureApiError } from "./sentry.js";
 import { evidenceQueue, redisClient, scanQueue, submitQueue } from "./queues.js";
 import { createRateLimiter } from "./rate-limit.js";
 import { evidenceJobId, scanJobId, submitJobId } from "./job-ids.js";
@@ -848,6 +849,7 @@ export function createApi(): Hono {
   app.notFound((c) => c.json({ error: "not_found" }, 404));
   app.onError((err, c) => {
     logger.error({ err: err.message, path: c.req.path }, "unhandled api error");
+    captureApiError(err, c.req.method, c.req.path);
     // Never leak internals to the caller.
     return c.json({ error: "internal_error" }, 500);
   });

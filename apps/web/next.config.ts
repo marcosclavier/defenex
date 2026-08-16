@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { withSentryConfig } from "@sentry/nextjs";
 
 const config: NextConfig = {
   // Workspace packages are consumed as TypeScript source (no build step),
@@ -42,4 +43,20 @@ const config: NextConfig = {
   },
 };
 
-export default config;
+/**
+ * Source-map upload is opt-in on the auth token being present. CI runs
+ * `pnpm build` with no Sentry secrets, and a plugin that hard-fails without
+ * them would turn every pull request red for a reporting feature.
+ */
+export default process.env.SENTRY_AUTH_TOKEN
+  ? withSentryConfig(config, {
+      org: process.env.SENTRY_ORG,
+      project: process.env.SENTRY_PROJECT,
+      authToken: process.env.SENTRY_AUTH_TOKEN,
+      silent: true,
+      // Maps are uploaded for readable stacks, then deleted so they are not
+      // served to the public alongside the bundle.
+      sourcemaps: { deleteSourcemapsAfterUpload: true },
+      disableLogger: true,
+    })
+  : config;

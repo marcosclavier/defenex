@@ -1,3 +1,5 @@
+// First, before anything that can throw.
+import { flushSentry } from "./sentry.js";
 import { serve } from "@hono/node-server";
 import { closeDb } from "@defenex/db";
 import { env } from "./env.js";
@@ -12,6 +14,7 @@ import { processEvidence } from "./jobs/evidence.js";
 import { processDraft } from "./jobs/draft.js";
 import { processSubmit } from "./jobs/submit.js";
 import { closeBrowser } from "./browser.js";
+import { captureUnhandled } from "./sentry.js";
 
 const server = serve({ fetch: createApi().fetch, port: env.PORT }, (info) =>
   logger.info({ port: info.port }, "worker listening"),
@@ -52,7 +55,7 @@ async function shutdown(signal: NodeJS.Signals): Promise<void> {
 
   const deadline = setTimeout(() => {
     logger.error("graceful shutdown timed out; forcing exit");
-    process.exit(1);
+    void flushSentry(1_000).finally(() => process.exit(1));
   }, 25_000);
   deadline.unref();
 
@@ -61,10 +64,12 @@ async function shutdown(signal: NodeJS.Signals): Promise<void> {
     await closeQueues();
     await closeBrowser();
     await closeDb();
+    await flushSentry();
     logger.info("shutdown complete");
     process.exit(0);
   } catch (err) {
     logger.error({ err: String(err) }, "error during shutdown");
+    await flushSentry();
     process.exit(1);
   }
 }
@@ -72,10 +77,13 @@ async function shutdown(signal: NodeJS.Signals): Promise<void> {
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
 process.on("SIGINT", () => void shutdown("SIGINT"));
 
-process.on("unhandledRejection", (reason) =>
-  logger.error({ reason: String(reason) }, "unhandled rejection"),
-);
+process.on("unhandledRejection", (reason) => {
+  logger.error({ reason: String(reason) }, "unhandled rejection");
+  captureUnhandled(reason);
+});
 process.on("uncaughtException", (err) => {
   logger.fatal({ err: err.message, stack: err.stack }, "uncaught exception");
+  captureUnhandled(err);
+  // shutdown() flushes Sentry before it exits.
   void shutdown("SIGTERM");
 });

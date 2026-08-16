@@ -2,6 +2,7 @@ import { Queue, Worker, type ConnectionOptions, type Processor } from "bullmq";
 import IORedis from "ioredis";
 import { env } from "./env.js";
 import { logger } from "./logger.js";
+import { captureJobFailure } from "./sentry.js";
 
 export { scanJobId, reportJobId, evidenceJobId, draftJobId, submitJobId } from "./job-ids.js";
 
@@ -150,9 +151,13 @@ export function startWorkers(handlers: {
   });
 
   for (const w of [scanWorker, reportWorker, alertWorker, scheduleWorker, evidenceWorker, draftWorker, submitWorker]) {
-    w.on("failed", (job, err) =>
-      logger.error({ queue: w.name, jobId: job?.id, attempt: job?.attemptsMade, err: err.message }, "job failed"),
-    );
+    w.on("failed", (job, err) => {
+      logger.error({ queue: w.name, jobId: job?.id, attempt: job?.attemptsMade, err: err.message }, "job failed");
+      // The only place the real Error with its stack is still in hand. Jobs
+      // that rethrow (scan does) reach here too, so capturing inside a job as
+      // well would double-report the same failure.
+      captureJobFailure(w.name, job?.id, err);
+    });
     w.on("completed", (job) => logger.info({ queue: w.name, jobId: job.id }, "job completed"));
     workers.push(w);
   }
