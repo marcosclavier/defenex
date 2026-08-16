@@ -24,7 +24,10 @@ export default async function RightsPage({ params }: { params: Promise<{ id: str
   const brand = dashboard.brands.find((b) => b.id === id);
   if (!brand) notFound();
 
-  const { rights } = await listRights(id).catch(() => ({ rights: [] }));
+  const { rights, attestation } = await listRights(id).catch(() => ({
+    rights: [],
+    attestation: null,
+  }));
   const verified = rights.filter((r) => r.status === "verified");
 
   return (
@@ -100,7 +103,7 @@ export default async function RightsPage({ params }: { params: Promise<{ id: str
 
         <section className="mt-10 border-t border-line pt-8">
           <h2 className="t-h3">Add a registration</h2>
-          <RightsForm brandId={id} />
+          <RightsForm brandId={id} attestationText={attestation?.text ?? null} />
         </section>
       </main>
       <Footer />

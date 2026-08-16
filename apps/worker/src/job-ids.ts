@@ -19,3 +19,7 @@ export function reportJobId(scanId: string): string {
 export function evidenceJobId(takedownId: string): string {
   return `evidence-${takedownId}`;
 }
+
+export function draftJobId(takedownId: string): string {
+  return `draft-${takedownId}`;
+}

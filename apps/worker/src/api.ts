@@ -2,7 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import { Hono } from "hono";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
-import { ScanInput, enforcementAllowance } from "@defenex/shared";
+import { RIGHTS_ATTESTATION_TEXT, RIGHTS_ATTESTATION_VERSION, ScanInput, enforcementAllowance } from "@defenex/shared";
 import { severityLabel } from "@defenex/core";
 import {
   brands, claimBrand, claimStripeEvent, countOpenFindings, createScan, decideRightsClaim,
@@ -328,6 +328,11 @@ export function createApi(): Hono {
         regNumber: z.string().min(4).max(20),
         jurisdiction: z.string().min(2).max(8).default("US"),
         documentKey: z.string().optional(),
+        // The affirmation itself. Required, because without it every notice we
+        // file for this brand asserts an authority nothing on file supports.
+        attestedByName: z.string().min(2).max(120),
+        attestedTitle: z.string().min(2).max(120),
+        attestationAccepted: z.literal(true),
       })
       .safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: "invalid_request" }, 400);
@@ -368,6 +373,14 @@ export function createApi(): Hono {
       registryUrl,
       documentKey: input.documentKey ?? null,
       registrySnapshot: snapshot,
+      attestation: {
+        name: input.attestedByName.trim(),
+        title: input.attestedTitle.trim(),
+        // Stored verbatim rather than by reference: this wording will change,
+        // and the record has to say what this person actually agreed to.
+        text: `[${RIGHTS_ATTESTATION_VERSION}] ${RIGHTS_ATTESTATION_TEXT}`,
+        ip: c.req.header("x-client-ip") ?? c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+      },
     });
 
     logger.info({ brandId: brand.id, regNumber: input.regNumber }, "rights claim submitted");
@@ -377,6 +390,14 @@ export function createApi(): Hono {
   api.get("/brands/:id/rights", async (c) => {
     const rows = await listRightsForBrand(c.req.param("id"));
     return c.json({
+      /**
+       * The wording the customer must agree to, served rather than duplicated
+       * in the web app. The worker is what stores the attestation, and the two
+       * deploy separately — a copy in the frontend could show one text while
+       * the record captured another, which is precisely the discrepancy this
+       * record exists to rule out.
+       */
+      attestation: { text: RIGHTS_ATTESTATION_TEXT, version: RIGHTS_ATTESTATION_VERSION },
       rights: rows.map((r) => ({
         id: r.id,
         regNumber: r.regNumber,
@@ -384,6 +405,9 @@ export function createApi(): Hono {
         status: r.status,
         registryUrl: r.registryUrl,
         registrySnapshot: r.registrySnapshot,
+        attestedByName: r.attestedByName,
+        attestedTitle: r.attestedTitle,
+        attestedAt: r.attestedAt,
         rejectedReason: r.rejectedReason,
         createdAt: r.createdAt,
       })),

@@ -156,6 +156,10 @@ export async function listFindings(scanId: string, db: Db = getDb()) {
   });
 }
 
+export async function getBrand(id: string, db: Db = getDb()) {
+  return db.query.brands.findFirst({ where: eq(brands.id, id) });
+}
+
 /** Single finding by id — the takedown flow starts from one, not from a scan. */
 export async function getFinding(id: string, db: Db = getDb()) {
   return db.query.findings.findFirst({ where: eq(findings.id, id) });
@@ -465,9 +469,22 @@ export async function submitRightsClaim(
     registryUrl?: string | null;
     documentKey?: string | null;
     registrySnapshot?: Record<string, unknown> | null;
+    attestation: {
+      name: string;
+      title: string;
+      text: string;
+      ip?: string | null;
+    };
   },
   db: Db = getDb(),
 ) {
+  const attested = {
+    attestedByName: input.attestation.name,
+    attestedTitle: input.attestation.title,
+    attestationText: input.attestation.text,
+    attestedAt: new Date(),
+    attestedIp: input.attestation.ip ?? null,
+  };
   const [row] = await db
     .insert(rightsVerifications)
     .values({
@@ -479,6 +496,7 @@ export async function submitRightsClaim(
       documentKey: input.documentKey ?? null,
       registrySnapshot: input.registrySnapshot ?? null,
       status: "pending",
+      ...attested,
     })
     .onConflictDoUpdate({
       target: [rightsVerifications.brandId, rightsVerifications.regNumber],
@@ -490,6 +508,9 @@ export async function submitRightsClaim(
         // claim must be re-reviewed rather than silently staying rejected.
         status: "pending",
         rejectedReason: null,
+        // Re-attested on every submission: the affirmation is about this
+        // filing, not a box ticked once a year ago.
+        ...attested,
       },
     })
     .returning();

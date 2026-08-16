@@ -12,7 +12,8 @@ import { coreLogger, logger } from "../logger.js";
 import { getFetcher } from "../browser.js";
 import { putObject } from "../storage/r2.js";
 import { evidenceBundleKey } from "../storage/keys.js";
-import type { EvidenceJobData } from "../queues.js";
+import { draftQueue, type EvidenceJobData } from "../queues.js";
+import { draftJobId } from "../job-ids.js";
 
 /**
  * Captures the evidence a notice cannot be filed without.
@@ -99,8 +100,9 @@ export async function processEvidence(job: Job<EvidenceJobData>): Promise<void> 
 
   await updateTakedown(takedownId, {
     evidenceBundleKey: key,
-    // Back to draft: evidence exists, and Stage 3 turns it into a notice. There
-    // is deliberately no path from here straight to submission.
+    // Copied out of the archive so the drafter and the approval queue can read
+    // the registrar, the host and the hashes without pulling megabytes back.
+    evidenceManifest: bundle.manifest as unknown as Record<string, unknown>,
     status: "draft",
     outcomeNote: null,
   });
@@ -118,6 +120,11 @@ export async function processEvidence(job: Job<EvidenceJobData>): Promise<void> 
     },
     "evidence bundle stored",
   );
+
+  // Drafting is a separate job: it calls a model and can fail on its own terms
+  // without putting the capture — the part that cannot be redone later — at
+  // risk of being repeated.
+  await draftQueue.add("draft", { takedownId }, { jobId: draftJobId(takedownId) });
 }
 
 /**

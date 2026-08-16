@@ -31,6 +31,17 @@ const Env = z.object({
    */
   RESEND_FROM_DOMAIN: z.string().default("defenex.ca"),
 
+  /**
+   * Identity that appears on the notices we file. This is the party a provider
+   * writes back to and, if a notice is disputed, the party answering for it —
+   * so it is configuration, not a literal buried in a template.
+   */
+  NOTICE_FROM_EMAIL: z.string().default("notices@defenex.com"),
+  NOTICE_ORGANISATION: z.string().default("Defenex"),
+  NOTICE_AGENT_TITLE: z.string().default("Brand Protection Agent"),
+  NOTICE_AGENT_PHONE: z.string().optional(),
+  NOTICE_AGENT_ADDRESS: z.string().optional(),
+
   // Shared secret with the Vercel app. Without it the API is unauthenticated,
   // so the server refuses to start rather than exposing an open endpoint.
   WORKER_API_SECRET: z.string().min(24),

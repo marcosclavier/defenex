@@ -26,6 +26,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     .object({
       regNumber: z.string().trim().min(4).max(20),
       jurisdiction: z.string().trim().min(2).max(8).default("US"),
+      attestedByName: z.string().trim().min(2).max(120),
+      attestedTitle: z.string().trim().min(2).max(120),
+      // Refused rather than coerced: an unticked box is the customer not
+      // making the affirmation, and every notice for this brand rests on it.
+      attestationAccepted: z.literal(true),
     })
     .safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "invalid_request" }, { status: 400 });

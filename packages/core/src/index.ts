@@ -58,3 +58,33 @@ export {
   type EvidenceBundle,
   type EvidenceManifest,
 } from "./evidence/bundle.js";
+export {
+  resolveChannel,
+  noticeKindFor,
+  knownPlatforms,
+  type ChannelDecision,
+  type ChannelRoute,
+  type NoticeKind,
+  type ResolveChannelInput,
+  type SubmissionMethod,
+  type TakedownChannel,
+} from "./takedown/channels.js";
+export {
+  renderNotice,
+  requiredStatementsFor,
+  missingRequiredStatements,
+  unresolvedPlaceholders,
+  type EvidenceCitation,
+  type NoticeContext,
+  type RenderedNotice,
+  type RightsCitation,
+  type Signatory,
+} from "./takedown/templates.js";
+export {
+  GeminiDescriber,
+  DEFAULT_DESCRIBER_MODEL,
+  sanitizeDescription,
+  fallbackDescription,
+  type DescribeInput,
+  type NoticeDescriber,
+} from "./takedown/describe.js";

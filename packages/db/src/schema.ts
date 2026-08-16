@@ -278,6 +278,22 @@ export const rightsVerifications = pgTable("rights_verifications", {
    */
   registrySnapshot: jsonb("registry_snapshot").$type<Record<string, unknown>>(),
   submittedByUserId: uuid("submitted_by_user_id").references(() => users.id),
+  /**
+   * The customer's own affirmation that they hold or represent the mark and
+   * authorise us to file on their behalf.
+   *
+   * Every notice we send says we are authorised to act for the owner. That
+   * statement needs a basis, and a verified registration is not one: the
+   * register proves the mark exists and who it belongs to, not that the person
+   * asking is that person or speaks for them. This is the record that makes the
+   * statement true, and the audit trail if it is ever challenged.
+   */
+  attestedByName: text("attested_by_name"),
+  attestedTitle: text("attested_title"),
+  /** The exact wording agreed to, snapshotted — ours may change. */
+  attestationText: text("attestation_text"),
+  attestedAt: timestamp("attested_at", { withTimezone: true }),
+  attestedIp: text("attested_ip"),
   verifiedByUserId: uuid("verified_by_user_id").references(() => users.id),
   verifiedAt: timestamp("verified_at", { withTimezone: true }),
   rejectedReason: text("rejected_reason"),
@@ -295,8 +311,24 @@ export const takedowns = pgTable("takedowns", {
   /** The rights record that authorised this filing, captured at request time. */
   rightsVerificationId: uuid("rights_verification_id").references(() => rightsVerifications.id),
   channel: text("channel").notNull(),
+  /**
+   * Which body of law the notice is framed under: trademark, copyright or a
+   * non-IP fraud report. Recorded rather than re-derived, because the frame is
+   * the part that carries liability and the category could be re-classified
+   * later by a different model.
+   */
+  noticeKind: text("notice_kind"),
+  noticeSubject: text("notice_subject"),
   noticeBody: text("notice_body"),
   evidenceBundleKey: text("evidence_bundle_key"),
+  /**
+   * The bundle's manifest, copied out so the approval queue and the drafter can
+   * read the registrar, the host and the artifact hashes without pulling a
+   * multi-megabyte archive back out of storage.
+   */
+  evidenceManifest: jsonb("evidence_manifest").$type<Record<string, unknown>>(),
+  /** Anything the reviewer needs to know before approving. */
+  reviewNotes: text("review_notes"),
   status: takedownStatusEnum("status").notNull().default("draft"),
   /** Never null once submitted — a human signs every notice. */
   approvedByUserId: uuid("approved_by_user_id").references(() => users.id),

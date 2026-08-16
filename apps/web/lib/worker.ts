@@ -209,7 +209,14 @@ export interface RightsClaim {
 
 export function submitRights(
   brandId: string,
-  input: { userId: string; regNumber: string; jurisdiction: string },
+  input: {
+    userId: string;
+    regNumber: string;
+    jurisdiction: string;
+    attestedByName: string;
+    attestedTitle: string;
+    attestationAccepted: true;
+  },
 ) {
   return call<{
     claim: { id: string; status: string };
@@ -222,7 +229,11 @@ export function submitRights(
 }
 
 export function listRights(brandId: string) {
-  return call<{ rights: RightsClaim[] }>(`/api/brands/${encodeURIComponent(brandId)}/rights`);
+  return call<{
+    rights: RightsClaim[];
+    /** Served by the worker, which is also what stores it; never duplicated here. */
+    attestation: { text: string; version: string };
+  }>(`/api/brands/${encodeURIComponent(brandId)}/rights`);
 }
 
 export function listPendingRights(userId: string) {

@@ -10,10 +10,26 @@ interface Snapshot {
   isLive?: boolean;
 }
 
-export function RightsForm({ brandId }: { brandId: string }) {
+/**
+ * The attestation wording comes from the worker, which is also what stores it.
+ * A copy here could show one text while the record captured another, and the
+ * two deploy separately — the discrepancy would be invisible until someone
+ * disputed a notice. If the worker is unreachable the form refuses to take an
+ * affirmation rather than inventing one.
+ */
+export function RightsForm({
+  brandId,
+  attestationText,
+}: {
+  brandId: string;
+  attestationText: string | null;
+}) {
   const router = useRouter();
   const [regNumber, setRegNumber] = useState("");
   const [jurisdiction, setJurisdiction] = useState("US");
+  const [attestedByName, setAttestedByName] = useState("");
+  const [attestedTitle, setAttestedTitle] = useState("");
+  const [attestationAccepted, setAttestationAccepted] = useState(false);
   const [pending, setPending] = useState(false);
   const [result, setResult] = useState<{ snapshot: Snapshot | null; lookupError: string | null } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -27,7 +43,13 @@ export function RightsForm({ brandId }: { brandId: string }) {
     const res = await fetch(`/api/brands/${brandId}/rights`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ regNumber, jurisdiction }),
+      body: JSON.stringify({
+        regNumber,
+        jurisdiction,
+        attestedByName,
+        attestedTitle,
+        attestationAccepted,
+      }),
     }).catch(() => null);
 
     const body = await res?.json().catch(() => null);
@@ -79,9 +101,60 @@ export function RightsForm({ brandId }: { brandId: string }) {
           </p>
         </div>
 
+        <fieldset className="space-y-4 border border-line bg-surface p-5">
+          <legend className="t-eyebrow px-2">Authority to act</legend>
+          <p className="t-small text-ink-mute">
+            Every notice we file states that we are authorised to act for the owner of the mark.
+            This is what that statement rests on, so we need it in your name rather than ours.
+          </p>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <label htmlFor="attestedByName" className="block text-sm font-medium">Your full name</label>
+              <input
+                id="attestedByName"
+                value={attestedByName}
+                onChange={(e) => setAttestedByName(e.target.value)}
+                required
+                autoComplete="name"
+                className="w-full border border-line bg-canvas px-3 py-2.5 text-sm text-ink placeholder:text-ink-mute transition-colors hover:border-line-strong"
+              />
+            </div>
+            <div className="space-y-2">
+              <label htmlFor="attestedTitle" className="block text-sm font-medium">Your role</label>
+              <input
+                id="attestedTitle"
+                value={attestedTitle}
+                onChange={(e) => setAttestedTitle(e.target.value)}
+                required
+                placeholder="General Counsel"
+                className="w-full border border-line bg-canvas px-3 py-2.5 text-sm text-ink placeholder:text-ink-mute transition-colors hover:border-line-strong"
+              />
+            </div>
+          </div>
+
+          {attestationText ? (
+            <label className="flex gap-3 text-sm">
+              <input
+                type="checkbox"
+                checked={attestationAccepted}
+                onChange={(e) => setAttestationAccepted(e.target.checked)}
+                required
+                className="mt-1 size-4 shrink-0 accent-paper"
+              />
+              <span className="text-ink-dim">{attestationText}</span>
+            </label>
+          ) : (
+            <p role="alert" className="text-sm text-critical">
+              The declaration could not be loaded, so this form cannot be submitted right now.
+              Please reload the page.
+            </p>
+          )}
+        </fieldset>
+
         <button
           type="submit"
-          disabled={pending}
+          disabled={pending || !attestationAccepted || !attestationText}
           className="bg-paper px-5 py-3 text-sm font-medium text-canvas transition-colors hover:bg-paper-dim disabled:opacity-50"
         >
           {pending ? "Checking the register…" : "Submit registration"}
