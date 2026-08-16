@@ -23,3 +23,7 @@ export function evidenceJobId(takedownId: string): string {
 export function draftJobId(takedownId: string): string {
   return `draft-${takedownId}`;
 }
+
+export function submitJobId(takedownId: string): string {
+  return `submit-${takedownId}`;
+}

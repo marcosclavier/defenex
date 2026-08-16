@@ -1,8 +1,10 @@
+import type { Job } from "bullmq";
 import { listBrandsDueForScan, markScheduled } from "@defenex/db";
 import { logger } from "../logger.js";
 import { env } from "../env.js";
 import { scanJobId } from "../job-ids.js";
 import { scanQueue } from "../queues.js";
+import { processVerify } from "./verify.js";
 
 /**
  * Enqueues rescans for brands whose cadence has elapsed.
@@ -11,7 +13,15 @@ import { scanQueue } from "../queues.js";
  * shares the queue's retry and concurrency behaviour, and so a redeploy cannot
  * miss a window — the next tick simply picks up whatever is overdue.
  */
-export async function processSchedule(): Promise<void> {
+export async function processSchedule(job: Job): Promise<void> {
+  // Two sweeps share this queue because it runs at concurrency 1, which is the
+  // property that matters: two ticks running at once could both see the same
+  // brand as due and bill the scan twice.
+  if (job.name === "verify-tick") return processVerify();
+  return enqueueDueScans();
+}
+
+async function enqueueDueScans(): Promise<void> {
   const due = await listBrandsDueForScan(env.SCHEDULE_BATCH_SIZE);
   if (due.length === 0) {
     logger.debug("scheduler: nothing due");

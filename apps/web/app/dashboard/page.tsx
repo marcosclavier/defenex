@@ -89,6 +89,12 @@ export default async function Dashboard() {
                   <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2">
                     <MonitoringToggle brandId={b.id} paused={b.monitoringPaused} plan={data.plan} />
                     <Link
+                      href={`/dashboard/brands/${b.id}/findings`}
+                      className="font-mono text-xs text-ink-mute underline underline-offset-4 transition-colors hover:text-ink-dim"
+                    >
+                      Findings
+                    </Link>
+                    <Link
                       href={`/dashboard/brands/${b.id}/rights`}
                       className="font-mono text-xs text-ink-mute underline underline-offset-4 transition-colors hover:text-ink-dim"
                     >
@@ -126,6 +132,23 @@ export default async function Dashboard() {
           </p>
           <ClaimForm />
         </section>
+
+        <div className="mt-12 flex flex-wrap gap-x-6 gap-y-2">
+          <Link
+            href="/dashboard/takedowns"
+            className="font-mono text-xs text-ink-mute underline underline-offset-4 transition-colors hover:text-ink-dim"
+          >
+            Removals
+          </Link>
+          {session.isAdmin && (
+            <Link
+              href="/admin"
+              className="font-mono text-xs text-ink-mute underline underline-offset-4 transition-colors hover:text-ink-dim"
+            >
+              Review queue
+            </Link>
+          )}
+        </div>
 
         <form action="/api/auth/signout" method="post" className="mt-12">
           <button

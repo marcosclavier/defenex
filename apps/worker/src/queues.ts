@@ -3,7 +3,7 @@ import IORedis from "ioredis";
 import { env } from "./env.js";
 import { logger } from "./logger.js";
 
-export { scanJobId, reportJobId, evidenceJobId, draftJobId } from "./job-ids.js";
+export { scanJobId, reportJobId, evidenceJobId, draftJobId, submitJobId } from "./job-ids.js";
 
 export interface ScanJobData {
   scanId: string;
@@ -37,6 +37,10 @@ export interface DraftJobData {
   takedownId: string;
 }
 
+export interface SubmitJobData {
+  takedownId: string;
+}
+
 export interface ReportJobData {
   scanId: string;
   email?: string | null;
@@ -48,6 +52,7 @@ export const QUEUE_ALERT = "alert";
 export const QUEUE_SCHEDULE = "schedule";
 export const QUEUE_EVIDENCE = "evidence";
 export const QUEUE_DRAFT = "draft";
+export const QUEUE_SUBMIT = "submit";
 
 // BullMQ requires this to be null: with retries enabled a blocking command can
 // abort mid-job and silently drop work.
@@ -72,6 +77,7 @@ export const reportQueue = new Queue<ReportJobData>(QUEUE_REPORT, { connection, 
 export const alertQueue = new Queue<AlertJobData>(QUEUE_ALERT, { connection, defaultJobOptions });
 export const scheduleQueue = new Queue(QUEUE_SCHEDULE, { connection, defaultJobOptions });
 export const draftQueue = new Queue<DraftJobData>(QUEUE_DRAFT, { connection, defaultJobOptions });
+export const submitQueue = new Queue<SubmitJobData>(QUEUE_SUBMIT, { connection, defaultJobOptions });
 export const evidenceQueue = new Queue<EvidenceJobData>(QUEUE_EVIDENCE, {
   connection,
   defaultJobOptions: {
@@ -93,6 +99,7 @@ export function startWorkers(handlers: {
   schedule: Processor;
   evidence: Processor<EvidenceJobData>;
   draft: Processor<DraftJobData>;
+  submit: Processor<SubmitJobData>;
 }): Worker[] {
   const scanWorker = new Worker<ScanJobData>(QUEUE_SCAN, handlers.scan, {
     connection,
@@ -134,7 +141,15 @@ export function startWorkers(handlers: {
     lockDuration: 3 * 60_000,
   });
 
-  for (const w of [scanWorker, reportWorker, alertWorker, scheduleWorker, evidenceWorker, draftWorker]) {
+  const submitWorker = new Worker<SubmitJobData>(QUEUE_SUBMIT, handlers.submit, {
+    connection,
+    // One at a time. These are legal notices leaving the building; there is no
+    // throughput problem worth the risk of concurrent sends racing on state.
+    concurrency: 1,
+    lockDuration: 3 * 60_000,
+  });
+
+  for (const w of [scanWorker, reportWorker, alertWorker, scheduleWorker, evidenceWorker, draftWorker, submitWorker]) {
     w.on("failed", (job, err) =>
       logger.error({ queue: w.name, jobId: job?.id, attempt: job?.attemptsMade, err: err.message }, "job failed"),
     );
@@ -146,8 +161,12 @@ export function startWorkers(handlers: {
 }
 
 /**
- * Registers the repeatable scheduler tick. Idempotent: BullMQ keys a repeatable
- * job by name and pattern, so a redeploy re-registers rather than duplicating.
+ * Registers the repeatable ticks. Idempotent: BullMQ keys a repeatable job by
+ * name and pattern, so a redeploy re-registers rather than duplicating.
+ *
+ * Both sweeps ride the same queue so they inherit its concurrency of 1.
+ * Verification runs less often than scan scheduling — it re-fetches one URL per
+ * takedown and nothing is gained by asking a host hourly whether it has acted.
  */
 export async function startScheduler(intervalMinutes: number): Promise<void> {
   await scheduleQueue.add(
@@ -159,6 +178,16 @@ export async function startScheduler(intervalMinutes: number): Promise<void> {
       removeOnComplete: { count: 20 },
     },
   );
+
+  await scheduleQueue.add(
+    "verify-tick",
+    {},
+    {
+      repeat: { every: 6 * 3_600_000 },
+      jobId: "verify-tick",
+      removeOnComplete: { count: 20 },
+    },
+  );
 }
 
 /** Stop consuming and let in-flight jobs finish before the process exits. */
@@ -166,7 +195,7 @@ export async function closeQueues(): Promise<void> {
   await Promise.allSettled(workers.map((w) => w.close()));
   await Promise.allSettled([
     scanQueue.close(), reportQueue.close(), alertQueue.close(), scheduleQueue.close(),
-    evidenceQueue.close(), draftQueue.close(),
+    evidenceQueue.close(), draftQueue.close(), submitQueue.close(),
   ]);
   await redis.quit().catch(() => {});
 }

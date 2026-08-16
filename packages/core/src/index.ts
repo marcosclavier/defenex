@@ -71,12 +71,15 @@ export {
 } from "./takedown/channels.js";
 export {
   renderNotice,
+  prepareForSubmission,
+  APPROVER_PLACEHOLDER,
   requiredStatementsFor,
   missingRequiredStatements,
   unresolvedPlaceholders,
   type EvidenceCitation,
   type NoticeContext,
   type RenderedNotice,
+  type PreparedNotice,
   type RightsCitation,
   type Signatory,
 } from "./takedown/templates.js";

@@ -317,3 +317,50 @@ I have a good faith belief that the page described above is fraudulent and is op
 
 ${signatureBlock(ctx.signatory, ctx.onBehalfOf)}`;
 }
+
+// ------------------------------------------------------------ approval
+
+export const APPROVER_PLACEHOLDER = "[approver name]";
+
+export interface PreparedNotice {
+  body: string;
+  /** The name written into the signature block, recorded on the takedown. */
+  signedByName: string;
+}
+
+/**
+ * Final check before a notice may leave the building.
+ *
+ * The stage-3 validation ran against text this system generated. This one runs
+ * against text a human has been free to edit, which is a different and more
+ * dangerous input: the whole point of the review step is that the approver can
+ * change the wording, and nothing stops them deleting the good-faith clause
+ * along with the sentence they disliked. So every required element is checked
+ * again here, on the bytes that would actually be sent.
+ *
+ * It also fills in the signature. The approver is the person making these
+ * statements, so their name goes on at the moment they make them — not earlier
+ * by a queue worker.
+ */
+export function prepareForSubmission(input: {
+  body: string;
+  noticeKind: NoticeKind;
+  approverName: string;
+}): { ok: true; notice: PreparedNotice } | { ok: false; problems: string[] } {
+  const approverName = input.approverName.trim();
+  if (approverName.length < 2) {
+    return { ok: false, problems: ["the approver has no name recorded to sign with"] };
+  }
+
+  const body = input.body.split(APPROVER_PLACEHOLDER).join(approverName);
+
+  const problems = [
+    ...missingRequiredStatements(body, input.noticeKind).map(
+      (m) => `the notice no longer contains ${m.id} (${m.because})`,
+    ),
+    ...unresolvedPlaceholders(body).map((p) => `unfilled field ${p}`),
+  ];
+
+  if (problems.length > 0) return { ok: false, problems };
+  return { ok: true, notice: { body, signedByName: approverName } };
+}

@@ -42,6 +42,26 @@ export async function putObject(
 }
 
 /**
+ * Reads an object back. Needed to attach an evidence bundle to a notice: an
+ * abuse desk should not have to follow a link that expires while the complaint
+ * sits in their queue.
+ *
+ * Returns null rather than throwing, like `putObject` — a missing attachment
+ * must not fail a send the caller has already decided to make.
+ */
+export async function getObject(key: string): Promise<Buffer | null> {
+  if (!hasStorage) return null;
+  try {
+    const res = await s3().send(new GetObjectCommand({ Bucket: env.R2_BUCKET, Key: key }));
+    if (!res.Body) return null;
+    return Buffer.from(await res.Body.transformToByteArray());
+  } catch (err) {
+    logger.error({ key, err: String(err) }, "object read failed");
+    return null;
+  }
+}
+
+/**
  * Short-lived signed URL. The bucket stays private: report screenshots and PDFs
  * contain customer data, and a public bucket is an enumeration vulnerability.
  */

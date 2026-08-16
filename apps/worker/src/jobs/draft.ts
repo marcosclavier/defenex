@@ -5,6 +5,7 @@ import {
   renderNotice,
   resolveChannel,
   unresolvedPlaceholders,
+  APPROVER_PLACEHOLDER,
   type ChannelDecision,
   type NoticeDescriber,
   type RightsCitation,
@@ -21,13 +22,6 @@ import type { DraftJobData } from "../queues.js";
  * document in a queue; a person reads it, edits it if they disagree with it,
  * and signs it. Stage 5 sends what that person approved, not what this wrote.
  */
-
-/**
- * The signature line is left unfilled on purpose. Whoever approves the notice
- * is the person making the statements in it, and their name is written in at
- * that moment — not by a queue worker at three in the morning.
- */
-const APPROVER_PLACEHOLDER = "[approver name]";
 
 export async function processDraft(job: Job<DraftJobData>): Promise<void> {
   const { takedownId } = job.data;

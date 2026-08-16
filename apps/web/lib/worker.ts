@@ -248,3 +248,125 @@ export function decideRights(id: string, userId: string, verified: boolean, reas
     body: JSON.stringify({ userId, verified, ...(reason ? { reason } : {}) }),
   });
 }
+
+// ------------------------------------------------------------ takedowns
+
+export interface OwnerFinding {
+  id: string;
+  url: string;
+  domain: string;
+  title: string;
+  category: string;
+  severity: number;
+  severityLabel: "critical" | "high" | "medium" | "low";
+  confidence: "high" | "medium" | "low";
+  evidenceQuote: string;
+  evidenceSource: "browser" | "stealth" | null;
+  status: string;
+  firstSeenAt: string;
+  screenshotUrl: string | null;
+  takedown: { id: string; status: string } | null;
+}
+
+export interface BrandFindingsPayload {
+  brand: { id: string; name: string; domain: string };
+  /** Whether a removal can be requested at all, and what an extra one costs. */
+  canRequest: {
+    hasVerifiedRights: boolean;
+    used: number;
+    included: number;
+    remaining: number;
+    exhausted: boolean;
+    overageUsd: number;
+  };
+  findings: OwnerFinding[];
+}
+
+export function listBrandFindings(brandId: string, userId: string) {
+  return call<BrandFindingsPayload>(
+    `/api/brands/${encodeURIComponent(brandId)}/findings?userId=${encodeURIComponent(userId)}`,
+  );
+}
+
+export function requestTakedown(findingId: string, userId: string) {
+  return call<{ takedownId: string; status: string }>(
+    `/api/findings/${encodeURIComponent(findingId)}/takedown`,
+    { method: "POST", body: JSON.stringify({ userId }) },
+  );
+}
+
+export interface TakedownSummary {
+  id: string;
+  status: string;
+  channel: string;
+  noticeKind: string | null;
+  hasEvidence: boolean;
+  submittedTo: string | null;
+  submittedAt: string | null;
+  resolvedAt: string | null;
+  outcomeNote: string | null;
+  declinedReason: string | null;
+  createdAt: string;
+  brand: { id: string; name: string; domain: string } | null;
+  finding: { id: string; url: string; category: string; severity: number } | null;
+}
+
+export function listUserTakedowns(userId: string) {
+  return call<{ takedowns: TakedownSummary[] }>(
+    `/api/users/${encodeURIComponent(userId)}/takedowns`,
+  );
+}
+
+// ------------------------------------------------------------ admin: takedowns
+
+export interface ReviewItem {
+  id: string;
+  status: string;
+  channel: string;
+  noticeKind: string | null;
+  noticeSubject: string | null;
+  noticeBody: string | null;
+  reviewNotes: string | null;
+  outcomeNote: string | null;
+  submittedTo: string | null;
+  createdAt: string;
+  brand: { id: string; name: string; domain: string } | null;
+  finding: {
+    id: string;
+    url: string;
+    category: string;
+    severity: number;
+    severityLabel: "critical" | "high" | "medium" | "low";
+    confidence: "high" | "medium" | "low";
+    evidenceQuote: string;
+    evidenceSource: "browser" | "stealth" | null;
+  } | null;
+  evidence: {
+    hasBundle: boolean;
+    url: string | null;
+    manifest: Record<string, unknown> | null;
+  };
+}
+
+export function listTakedownsForReview(userId: string) {
+  return call<{ takedowns: ReviewItem[] }>(
+    `/api/admin/takedowns?userId=${encodeURIComponent(userId)}`,
+  );
+}
+
+export function decideTakedown(
+  id: string,
+  input: { userId: string; approve: boolean; noticeBody?: string; reason?: string },
+) {
+  return call<{ status: string; signedByName?: string; dispatch?: string; packetUrl?: string | null }>(
+    `/api/admin/takedowns/${encodeURIComponent(id)}/decide`,
+    { method: "POST", body: JSON.stringify(input) },
+  );
+}
+
+export function markTakedownFiled(id: string, userId: string, submittedTo: string) {
+  return call<{ status: string }>(
+    `/api/admin/takedowns/${encodeURIComponent(id)}/mark-filed`,
+    { method: "POST", body: JSON.stringify({ userId, submittedTo }) },
+  );
+}

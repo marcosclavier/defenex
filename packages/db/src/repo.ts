@@ -130,7 +130,10 @@ export async function reconcileFindings(
     where: and(
       eq(findings.brandId, brandId),
       seenHashes.length ? sql`${findings.urlHash} not in ${seenHashes}` : sql`true`,
-      inArray(findings.status, ["new", "confirmed", "reappeared"]),
+      // `actioned` belongs here too: a finding we have filed against must still
+      // be able to accrue missed scans, or the scan path could never observe
+      // the removal that the notice was sent to cause.
+      inArray(findings.status, ["new", "confirmed", "reappeared", "actioned"]),
     ),
   });
 
@@ -247,11 +250,64 @@ export async function listScansForBrand(brandId: string, limit = 10, db: Db = ge
   });
 }
 
+/**
+ * Open findings for the owner's own view, with any takedown already raised
+ * against each. The public report renders findings too, but it is token-gated
+ * and has no session — so this is the only place an owner can act on one.
+ */
+export async function listOpenFindingsForBrand(brandId: string, db: Db = getDb()) {
+  const rows = await db.query.findings.findMany({
+    where: and(
+      eq(findings.brandId, brandId),
+      inArray(findings.status, ["new", "confirmed", "reappeared", "actioned"]),
+    ),
+    orderBy: (f, { desc }) => [desc(f.severity)],
+    limit: 200,
+  });
+
+  const raised = await db.query.takedowns.findMany({
+    where: eq(takedowns.brandId, brandId),
+    orderBy: (t, { desc }) => [desc(t.createdAt)],
+  });
+  const byFinding = new Map(raised.map((t) => [t.findingId, t]));
+
+  return rows.map((f) => ({ finding: f, takedown: byFinding.get(f.id) ?? null }));
+}
+
+/** Every takedown across the brands a user owns, so the page need not fan out. */
+export async function listTakedownsForUser(userId: string, db: Db = getDb()) {
+  const owned = await db.query.brands.findMany({ where: eq(brands.ownerUserId, userId) });
+  if (owned.length === 0) return [];
+
+  const rows = await db.query.takedowns.findMany({
+    where: inArray(takedowns.brandId, owned.map((b) => b.id)),
+    orderBy: (t, { desc }) => [desc(t.createdAt)],
+    limit: 200,
+  });
+
+  const brandById = new Map(owned.map((b) => [b.id, b]));
+  const findingRows = rows.length
+    ? await db.query.findings.findMany({ where: inArray(findings.id, rows.map((t) => t.findingId)) })
+    : [];
+  const findingById = new Map(findingRows.map((f) => [f.id, f]));
+
+  return rows.map((t) => ({
+    takedown: t,
+    brand: brandById.get(t.brandId) ?? null,
+    finding: findingById.get(t.findingId) ?? null,
+  }));
+}
+
+/**
+ * `actioned` counts as open. A finding with a notice filed against it is still
+ * live infringement until the page actually comes down, and reporting it as
+ * closed the moment we posted a letter would flatter the numbers.
+ */
 export async function countOpenFindings(brandId: string, db: Db = getDb()) {
   const rows = await db
     .select({ severity: findings.severity })
     .from(findings)
-    .where(and(eq(findings.brandId, brandId), inArray(findings.status, ["new", "confirmed", "reappeared"])));
+    .where(and(eq(findings.brandId, brandId), inArray(findings.status, ["new", "confirmed", "reappeared", "actioned"])));
   return {
     total: rows.length,
     critical: rows.filter((r) => r.severity >= 80).length,
@@ -642,6 +698,178 @@ export async function listTakedownsAwaitingApproval(db: Db = getDb()) {
     orderBy: (t, { asc }) => [asc(t.createdAt)],
     limit: 100,
   });
+}
+
+/** Awaiting a human, with everything that human needs to decide. */
+export async function listTakedownsForReview(db: Db = getDb()) {
+  return db.query.takedowns.findMany({
+    where: inArray(takedowns.status, ["pending_approval", "blocked_no_evidence", "awaiting_filing"]),
+    orderBy: (t, { asc }) => [asc(t.createdAt)],
+    limit: 100,
+  });
+}
+
+export type TakedownDecisionRefusal = "not_found" | "wrong_state";
+
+/**
+ * Records an approval or a decline.
+ *
+ * The notice body passed in has already been checked by
+ * `prepareForSubmission`: this function persists a decision, it does not judge
+ * one. It does guard the state machine, because a second approval arriving from
+ * a double-clicked form must not re-stamp a notice that has already gone out.
+ */
+export async function decideTakedown(
+  id: string,
+  decision:
+    | { approve: true; adminUserId: string; noticeBody: string; signedByName: string; nextStatus: "awaiting_filing" | "submitted" }
+    | { approve: false; adminUserId: string; reason: string },
+  db: Db = getDb(),
+): Promise<{ ok: true; takedown: typeof takedowns.$inferSelect } | { ok: false; reason: TakedownDecisionRefusal }> {
+  const current = await db.query.takedowns.findFirst({ where: eq(takedowns.id, id) });
+  if (!current) return { ok: false, reason: "not_found" };
+  if (current.status !== "pending_approval") return { ok: false, reason: "wrong_state" };
+
+  const patch = decision.approve
+    ? {
+        status: decision.nextStatus,
+        noticeBody: decision.noticeBody,
+        signedByName: decision.signedByName,
+        approvedByUserId: decision.adminUserId,
+        approvedAt: new Date(),
+        declinedReason: null,
+      }
+    : {
+        status: "declined" as const,
+        declinedReason: decision.reason,
+        approvedByUserId: decision.adminUserId,
+        approvedAt: new Date(),
+      };
+
+  const [row] = await db.update(takedowns).set(patch).where(eq(takedowns.id, id)).returning();
+  return { ok: true, takedown: row! };
+}
+
+/**
+ * Confirms a portal notice was actually filed, which is the moment the
+ * customer's allowance is spent. Guarded on the current state so a repeated
+ * click cannot bill twice.
+ */
+export async function markTakedownFiled(
+  id: string,
+  input: { submittedTo: string },
+  db: Db = getDb(),
+): Promise<{ ok: true; takedown: typeof takedowns.$inferSelect } | { ok: false; reason: TakedownDecisionRefusal }> {
+  const current = await db.query.takedowns.findFirst({ where: eq(takedowns.id, id) });
+  if (!current) return { ok: false, reason: "not_found" };
+  if (current.status !== "awaiting_filing") return { ok: false, reason: "wrong_state" };
+
+  const [row] = await db
+    .update(takedowns)
+    .set({ status: "submitted", submittedAt: new Date(), submittedTo: input.submittedTo })
+    .where(eq(takedowns.id, id))
+    .returning();
+  return { ok: true, takedown: row! };
+}
+
+// ------------------------------------------------------------ verification
+
+/**
+ * How long to leave a provider alone before asking whether the page came down,
+ * and how long to keep asking.
+ *
+ * Two days first, because a host that acts within the hour is the exception and
+ * checking sooner just burns fetches. Then daily. After thirty checks a notice
+ * that has produced nothing is not going to, and it belongs in front of a
+ * person deciding whether to escalate rather than in a loop.
+ */
+export const VERIFY_FIRST_DELAY_HOURS = 48;
+export const VERIFY_INTERVAL_HOURS = 24;
+export const VERIFY_MAX_ATTEMPTS = 30;
+
+/** Two consecutive sightings of an absent page, mirroring the scanner's rule. */
+export const VERIFY_MISSES_TO_CONFIRM = 2;
+
+/**
+ * Pure, like `isDueForScan`, so the rules that decide when we go back and look
+ * are testable without a database.
+ */
+export function isDueForVerification(input: {
+  status: string;
+  submittedAt: Date | null;
+  lastVerifiedAt: Date | null;
+  verifyAttempts: number;
+  now?: Date;
+}): boolean {
+  // Only a notice that actually went out has anything to verify.
+  if (input.status !== "submitted" && input.status !== "accepted") return false;
+  if (!input.submittedAt) return false;
+  if (input.verifyAttempts >= VERIFY_MAX_ATTEMPTS) return false;
+
+  const now = input.now ?? new Date();
+  const hoursSince = (from: Date) => (now.getTime() - from.getTime()) / 3_600_000;
+
+  if (!input.lastVerifiedAt) return hoursSince(input.submittedAt) >= VERIFY_FIRST_DELAY_HOURS;
+  return hoursSince(input.lastVerifiedAt) >= VERIFY_INTERVAL_HOURS;
+}
+
+export async function listTakedownsDueForVerification(limit = 25, db: Db = getDb()) {
+  const candidates = await db.query.takedowns.findMany({
+    where: inArray(takedowns.status, ["submitted", "accepted"]),
+    orderBy: (t, { asc }) => [asc(t.lastVerifiedAt)],
+    limit: 200,
+  });
+
+  const due: typeof candidates = [];
+  for (const t of candidates) {
+    if (due.length >= limit) break;
+    if (isDueForVerification(t)) due.push(t);
+  }
+  return due;
+}
+
+/**
+ * Records one check. `gone` accumulates a streak rather than concluding
+ * immediately: a single failed fetch and a genuine removal look identical from
+ * here, which is why the scanner also waits for a second miss.
+ */
+export async function recordVerification(
+  id: string,
+  gone: boolean,
+  db: Db = getDb(),
+): Promise<{ confirmed: boolean; streak: number }> {
+  const current = await db.query.takedowns.findFirst({ where: eq(takedowns.id, id) });
+  if (!current) return { confirmed: false, streak: 0 };
+
+  const streak = gone ? current.verifyMissStreak + 1 : 0;
+  const confirmed = streak >= VERIFY_MISSES_TO_CONFIRM;
+
+  await db
+    .update(takedowns)
+    .set({
+      lastVerifiedAt: new Date(),
+      verifyAttempts: current.verifyAttempts + 1,
+      verifyMissStreak: streak,
+      ...(confirmed ? { status: "removed" as const, resolvedAt: new Date() } : {}),
+    })
+    .where(eq(takedowns.id, id));
+
+  if (confirmed) {
+    // The page being gone is the evidence the notice worked, so the finding
+    // stops being open at the same moment the takedown resolves.
+    await db.update(findings).set({ status: "removed" }).where(eq(findings.id, current.findingId));
+  }
+
+  return { confirmed, streak };
+}
+
+export async function updateFindingStatus(
+  id: string,
+  status: (typeof findings.$inferSelect)["status"],
+  db: Db = getDb(),
+) {
+  const [row] = await db.update(findings).set({ status }).where(eq(findings.id, id)).returning();
+  return row ?? null;
 }
 
 /** Spent on submission, never on request, so a declined draft costs nothing. */

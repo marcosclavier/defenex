@@ -10,6 +10,7 @@ import { processAlert } from "./jobs/alert.js";
 import { processSchedule } from "./jobs/schedule.js";
 import { processEvidence } from "./jobs/evidence.js";
 import { processDraft } from "./jobs/draft.js";
+import { processSubmit } from "./jobs/submit.js";
 import { closeBrowser } from "./browser.js";
 
 const server = serve({ fetch: createApi().fetch, port: env.PORT }, (info) =>
@@ -23,6 +24,7 @@ startWorkers({
   schedule: processSchedule,
   evidence: processEvidence,
   draft: processDraft,
+  submit: processSubmit,
 });
 logger.info(
   { scanConcurrency: env.SCAN_CONCURRENCY, reportConcurrency: env.REPORT_CONCURRENCY },

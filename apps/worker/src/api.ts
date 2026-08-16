@@ -6,21 +6,24 @@ import { RIGHTS_ATTESTATION_TEXT, RIGHTS_ATTESTATION_VERSION, ScanInput, enforce
 import { severityLabel } from "@defenex/core";
 import {
   brands, claimBrand, claimStripeEvent, countOpenFindings, createScan, decideRightsClaim,
-  getCustomer, getDb, getFinding, getReportByScanId, getReportByToken, getScan, getTakedown,
-  getUserById, listBrandsForUser, listFindings, listPendingRights, listRightsForBrand,
-  listScansForBrand, listTakedownsForBrand, requestTakedown, setMonitoringPaused,
-  submitRightsClaim, updateTakedown, upsertBrand, upsertCustomer,
+  decideTakedown, getBrand, getCustomer, getDb, getFinding, getReportByScanId, getReportByToken,
+  getScan, getTakedown, getUserById, listBrandsForUser, listFindings, listOpenFindingsForBrand,
+  listPendingRights, listRightsForBrand, listScansForBrand, listTakedownsForBrand,
+  listTakedownsForReview, listTakedownsForUser, markTakedownFiled, requestTakedown,
+  setMonitoringPaused, submitRightsClaim, updateTakedown, upsertBrand, upsertCustomer,
+  verifiedRightsFor,
 } from "@defenex/db";
 import { render } from "@react-email/render";
 import { MagicLink } from "@defenex/emails";
 import { Resend } from "resend";
 import { createAuth } from "./auth.js";
-import { UsptoClient, RightsLookupError } from "@defenex/core";
+import { UsptoClient, RightsLookupError, prepareForSubmission, type NoticeKind } from "@defenex/core";
 import { env } from "./env.js";
 import { logger } from "./logger.js";
-import { evidenceQueue, redisClient, scanQueue } from "./queues.js";
+import { evidenceQueue, redisClient, scanQueue, submitQueue } from "./queues.js";
 import { createRateLimiter } from "./rate-limit.js";
-import { evidenceJobId, scanJobId } from "./job-ids.js";
+import { evidenceJobId, scanJobId, submitJobId } from "./job-ids.js";
+import { chargeEnforcement, isEmailChannel } from "./enforcement.js";
 import { signedUrlFor } from "./storage/r2.js";
 
 /** Constant-time compare so the secret cannot be recovered by timing the endpoint. */
@@ -578,6 +581,224 @@ export function createApi(): Hono {
 
     logger.info({ takedownId: takedown.id, by: parsed.data.userId }, "evidence recapture queued");
     return c.json({ status: "capturing_evidence" });
+  });
+
+  /**
+   * The owner's own findings. Distinct from the report endpoint, which is
+   * token-gated and anonymous: this one is scoped to the session's user and
+   * carries the takedown state, because it is where a removal gets requested.
+   */
+  api.get("/brands/:id/findings", async (c) => {
+    const userId = c.req.query("userId") ?? "";
+    const brand = await getBrand(c.req.param("id"));
+    if (!brand) return c.json({ error: "not_found" }, 404);
+    if (brand.ownerUserId !== userId && !(await requireAdmin(userId))) {
+      return c.json({ error: "not_found" }, 404);
+    }
+
+    const rows = await listOpenFindingsForBrand(brand.id);
+    const rights = await verifiedRightsFor(brand.id);
+    const allowance = enforcementAllowance(await getCustomer(userId));
+
+    return c.json({
+      brand: { id: brand.id, name: brand.name, domain: brand.domain },
+      // Surfaced so the page can explain a refusal before the customer hits it.
+      canRequest: { hasVerifiedRights: Boolean(rights), ...allowance },
+      findings: await Promise.all(
+        rows.map(async ({ finding, takedown }) => ({
+          id: finding.id,
+          url: finding.url,
+          domain: finding.domain,
+          title: finding.title,
+          category: finding.category,
+          severity: finding.severity,
+          severityLabel: severityLabel(finding.severity),
+          confidence: finding.confidence,
+          evidenceQuote: finding.evidenceQuote,
+          evidenceSource: finding.evidenceSource,
+          status: finding.status,
+          firstSeenAt: finding.firstSeenAt,
+          screenshotUrl: finding.screenshotKey ? await signedUrlFor(finding.screenshotKey) : null,
+          takedown: takedown ? { id: takedown.id, status: takedown.status } : null,
+        })),
+      ),
+    });
+  });
+
+  api.get("/users/:userId/takedowns", async (c) => {
+    const rows = await listTakedownsForUser(c.req.param("userId"));
+    return c.json({
+      takedowns: rows.map(({ takedown: t, brand, finding }) => ({
+        id: t.id,
+        status: t.status,
+        channel: t.channel,
+        noticeKind: t.noticeKind,
+        hasEvidence: Boolean(t.evidenceBundleKey),
+        submittedTo: t.submittedTo,
+        submittedAt: t.submittedAt,
+        resolvedAt: t.resolvedAt,
+        outcomeNote: t.outcomeNote,
+        declinedReason: t.declinedReason,
+        createdAt: t.createdAt,
+        brand: brand ? { id: brand.id, name: brand.name, domain: brand.domain } : null,
+        finding: finding
+          ? { id: finding.id, url: finding.url, category: finding.category, severity: finding.severity }
+          : null,
+      })),
+    });
+  });
+
+  // ------------------------------------------------------------ admin: takedowns
+
+  /**
+   * Everything waiting on a person, with what that person needs to decide:
+   * the finding, the preserved evidence, and who the notice would go to.
+   */
+  api.get("/admin/takedowns", async (c) => {
+    const userId = c.req.query("userId") ?? "";
+    if (!(await requireAdmin(userId))) return c.json({ error: "not_found" }, 404);
+
+    const rows = await listTakedownsForReview();
+    const items = await Promise.all(
+      rows.map(async (t) => {
+        const [finding, brand] = await Promise.all([getFinding(t.findingId), getBrand(t.brandId)]);
+        return {
+          id: t.id,
+          status: t.status,
+          channel: t.channel,
+          noticeKind: t.noticeKind,
+          noticeSubject: t.noticeSubject,
+          noticeBody: t.noticeBody,
+          reviewNotes: t.reviewNotes,
+          outcomeNote: t.outcomeNote,
+          submittedTo: t.submittedTo,
+          createdAt: t.createdAt,
+          brand: brand ? { id: brand.id, name: brand.name, domain: brand.domain } : null,
+          finding: finding
+            ? {
+                id: finding.id,
+                url: finding.url,
+                category: finding.category,
+                severity: finding.severity,
+                severityLabel: severityLabel(finding.severity),
+                confidence: finding.confidence,
+                evidenceQuote: finding.evidenceQuote,
+                evidenceSource: finding.evidenceSource,
+              }
+            : null,
+          evidence: {
+            hasBundle: Boolean(t.evidenceBundleKey),
+            url: t.evidenceBundleKey ? await signedUrlFor(t.evidenceBundleKey, 900) : null,
+            manifest: t.evidenceManifest ?? null,
+          },
+        };
+      }),
+    );
+    return c.json({ takedowns: items });
+  });
+
+  api.post("/admin/takedowns/:id/decide", async (c) => {
+    const parsed = z
+      .object({
+        userId: z.uuid(),
+        approve: z.boolean(),
+        /** The reviewer's edited text. Absent means approve the draft as written. */
+        noticeBody: z.string().min(50).max(50_000).optional(),
+        reason: z.string().max(1000).optional(),
+      })
+      .safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: "invalid_request" }, 400);
+    if (!(await requireAdmin(parsed.data.userId))) return c.json({ error: "not_found" }, 404);
+
+    const takedown = await getTakedown(c.req.param("id"));
+    if (!takedown) return c.json({ error: "not_found" }, 404);
+
+    if (!parsed.data.approve) {
+      const result = await decideTakedown(takedown.id, {
+        approve: false,
+        adminUserId: parsed.data.userId,
+        reason: parsed.data.reason?.trim() || "not stated",
+      });
+      if (!result.ok) return c.json({ error: result.reason }, result.reason === "not_found" ? 404 : 409);
+      logger.info({ takedownId: takedown.id, by: parsed.data.userId }, "takedown declined");
+      // Declined costs the customer nothing; no allowance is touched.
+      return c.json({ status: "declined" });
+    }
+
+    const approver = await getUserById(parsed.data.userId);
+    const body = parsed.data.noticeBody ?? takedown.noticeBody;
+    if (!body) return c.json({ error: "no_notice_to_approve" }, 409);
+
+    /**
+     * Re-validated against the reviewer's own text. The draft-time check ran on
+     * text this system generated; an approver is free to edit, and deleting a
+     * sworn statement along with a sentence they disliked must be refused
+     * rather than trusted.
+     */
+    const prepared = prepareForSubmission({
+      body,
+      noticeKind: (takedown.noticeKind ?? "trademark") as NoticeKind,
+      approverName: approver?.name ?? "",
+    });
+    if (!prepared.ok) {
+      logger.warn({ takedownId: takedown.id, problems: prepared.problems }, "approval refused");
+      return c.json({ error: "notice_incomplete", problems: prepared.problems }, 422);
+    }
+
+    /**
+     * Both routes land in `awaiting_filing`: approved, not yet filed. The only
+     * difference is who finishes it — a job for an email channel, a person at a
+     * keyboard for a portal.
+     *
+     * Routing email straight to `submitted` here was tempting and wrong: the
+     * job would then have no way to tell "approved but not yet sent" from
+     * "already sent", so a retry after a delivery failure could send a sworn
+     * legal notice twice. Making the send *perform* the transition means the
+     * state machine is itself the guard.
+     */
+    const result = await decideTakedown(takedown.id, {
+      approve: true,
+      adminUserId: parsed.data.userId,
+      noticeBody: prepared.notice.body,
+      signedByName: prepared.notice.signedByName,
+      nextStatus: "awaiting_filing",
+    });
+    if (!result.ok) return c.json({ error: result.reason }, result.reason === "not_found" ? 404 : 409);
+
+    if (isEmailChannel(takedown.channel)) {
+      await submitQueue.add("submit", { takedownId: takedown.id }, { jobId: submitJobId(takedown.id) });
+    }
+
+    logger.info(
+      { takedownId: takedown.id, by: parsed.data.userId, channel: takedown.channel },
+      "takedown approved",
+    );
+    return c.json({
+      status: "awaiting_filing",
+      signedByName: prepared.notice.signedByName,
+      dispatch: isEmailChannel(takedown.channel) ? "queued" : "manual",
+      packetUrl: takedown.submittedTo,
+    });
+  });
+
+  /**
+   * A human confirming a portal notice actually went in. This is the moment the
+   * customer's allowance is spent — not approval, because an approved notice
+   * that was never filed delivered nothing.
+   */
+  api.post("/admin/takedowns/:id/mark-filed", async (c) => {
+    const parsed = z
+      .object({ userId: z.uuid(), submittedTo: z.string().min(3).max(500) })
+      .safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: "invalid_request" }, 400);
+    if (!(await requireAdmin(parsed.data.userId))) return c.json({ error: "not_found" }, 404);
+
+    const result = await markTakedownFiled(c.req.param("id"), { submittedTo: parsed.data.submittedTo });
+    if (!result.ok) return c.json({ error: result.reason }, result.reason === "not_found" ? 404 : 409);
+
+    await chargeEnforcement(result.takedown, logger);
+    logger.info({ takedownId: result.takedown.id, by: parsed.data.userId }, "takedown marked filed");
+    return c.json({ status: "submitted" });
   });
 
   api.post("/billing/sync", async (c) => {

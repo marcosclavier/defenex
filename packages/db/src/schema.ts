@@ -93,6 +93,15 @@ export const takedownStatusEnum = pgEnum("takedown_status", [
   "pending_approval",
   /** An admin declined to file it. Costs the customer nothing. */
   "declined",
+  /**
+   * Approved and the packet is ready, but a human still has to file it.
+   *
+   * Portal channels are not automated: scripting a platform's IP form breaches
+   * its terms and risks the submitter account every customer depends on. The
+   * allowance is spent when someone confirms it was actually filed, so an
+   * approved notice that never went out costs the customer nothing.
+   */
+  "awaiting_filing",
   "submitted",
   "accepted",
   "rejected",
@@ -332,12 +341,29 @@ export const takedowns = pgTable("takedowns", {
   status: takedownStatusEnum("status").notNull().default("draft"),
   /** Never null once submitted — a human signs every notice. */
   approvedByUserId: uuid("approved_by_user_id").references(() => users.id),
+  approvedAt: timestamp("approved_at", { withTimezone: true }),
+  /**
+   * The name actually written into the signature block. Stored rather than
+   * derived from the approver's user row, because the notice is a document that
+   * went out with particular words in it and a later rename must not silently
+   * rewrite history.
+   */
+  signedByName: text("signed_by_name"),
   declinedReason: text("declined_reason"),
   /** Where the notice went: an email address, or the portal URL used. */
   submittedTo: text("submitted_to"),
   submittedAt: timestamp("submitted_at", { withTimezone: true }),
   resolvedAt: timestamp("resolved_at", { withTimezone: true }),
   outcomeNote: text("outcome_note"),
+  /** Re-checking whether the page actually came down. */
+  lastVerifiedAt: timestamp("last_verified_at", { withTimezone: true }),
+  verifyAttempts: integer("verify_attempts").notNull().default(0),
+  /**
+   * Consecutive checks that found the page gone. Two are required before the
+   * takedown is called removed, for the same reason the scanner requires two
+   * missed scans: one failed fetch is indistinguishable from a removal.
+   */
+  verifyMissStreak: integer("verify_miss_streak").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
   index("takedowns_finding_idx").on(t.findingId),
