@@ -1,8 +1,9 @@
-import { createHash } from "node:crypto";
 import { PutObjectCommand, S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { env, hasStorage } from "../env.js";
 import { logger } from "../logger.js";
+
+export { screenshotKey, evidenceBundleKey, EVIDENCE_KEY_PREFIX } from "./keys.js";
 
 let client: S3Client | null = null;
 
@@ -18,12 +19,6 @@ function s3(): S3Client {
     });
   }
   return client;
-}
-
-/** Content-addressed key so re-running a scan does not duplicate identical images. */
-export function screenshotKey(scanId: string, url: string): string {
-  const hash = createHash("sha256").update(url).digest("hex").slice(0, 32);
-  return `screenshots/${scanId}/${hash}.jpg`;
 }
 
 export async function putObject(

@@ -40,3 +40,4 @@ export const MAX_PAGE_TEXT_CHARS = 8_000;
 
 /** Only fetch+screenshot results scoring at or above this; below it, snippet-only. */
 export const ENRICHMENT_SEVERITY_FLOOR = 40;
+

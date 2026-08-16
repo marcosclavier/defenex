@@ -30,3 +30,31 @@ export {
   normalizeRegNumber,
   type RegistrationRecord,
 } from "./rights/uspto.js";
+export {
+  RdapClient,
+  RdapError,
+  parseRdapDomain,
+  parseRdapIp,
+  registrableDomain,
+  resolveIpv4,
+  type RdapConfig,
+  type RdapContact,
+  type RdapDomainRecord,
+  type RdapIpRecord,
+} from "./enrich/rdap.js";
+export {
+  capturePage,
+  sha256Of,
+  artifactOf,
+  jsonArtifact,
+  type CaptureOptions,
+  type CaptureResult,
+  type EvidenceArtifact,
+} from "./evidence/capture.js";
+export {
+  buildEvidenceBundle,
+  EVIDENCE_FORMAT_VERSION,
+  type BundleInput,
+  type EvidenceBundle,
+  type EvidenceManifest,
+} from "./evidence/bundle.js";

@@ -2,13 +2,14 @@ import { timingSafeEqual } from "node:crypto";
 import { Hono } from "hono";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
-import { ScanInput } from "@defenex/shared";
+import { ScanInput, enforcementAllowance } from "@defenex/shared";
 import { severityLabel } from "@defenex/core";
 import {
   brands, claimBrand, claimStripeEvent, countOpenFindings, createScan, decideRightsClaim,
-  getCustomer, getDb, getReportByScanId, getReportByToken, getScan, getUserById,
-  listBrandsForUser, listFindings, listPendingRights, listRightsForBrand, listScansForBrand,
-  setMonitoringPaused, submitRightsClaim, upsertBrand, upsertCustomer,
+  getCustomer, getDb, getFinding, getReportByScanId, getReportByToken, getScan, getTakedown,
+  getUserById, listBrandsForUser, listFindings, listPendingRights, listRightsForBrand,
+  listScansForBrand, listTakedownsForBrand, requestTakedown, setMonitoringPaused,
+  submitRightsClaim, updateTakedown, upsertBrand, upsertCustomer,
 } from "@defenex/db";
 import { render } from "@react-email/render";
 import { MagicLink } from "@defenex/emails";
@@ -17,9 +18,9 @@ import { createAuth } from "./auth.js";
 import { UsptoClient, RightsLookupError } from "@defenex/core";
 import { env } from "./env.js";
 import { logger } from "./logger.js";
-import { redisClient, scanQueue } from "./queues.js";
+import { evidenceQueue, redisClient, scanQueue } from "./queues.js";
 import { createRateLimiter } from "./rate-limit.js";
-import { scanJobId } from "./job-ids.js";
+import { evidenceJobId, scanJobId } from "./job-ids.js";
 import { signedUrlFor } from "./storage/r2.js";
 
 /** Constant-time compare so the secret cannot be recovered by timing the endpoint. */
@@ -414,6 +415,145 @@ export function createApi(): Hono {
       "rights decision recorded",
     );
     return c.json({ status: row.status });
+  });
+
+  // ------------------------------------------------------------ takedowns
+
+  /**
+   * Every precondition lives in `requestTakedown`, not here: the rights gate is
+   * a legal control and must hold for any caller, including a future one that
+   * is not this route.
+   */
+  const REFUSAL_STATUS: Record<string, 402 | 404 | 409> = {
+    not_found: 404,
+    // Deliberately 404, not 403: a valid session must not be able to probe
+    // which finding ids exist under another account.
+    not_owner: 404,
+    no_verified_rights: 409,
+    already_requested: 409,
+    allowance_exhausted: 402,
+  };
+
+  api.post("/findings/:id/takedown", async (c) => {
+    const parsed = z.object({ userId: z.uuid() }).safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: "invalid_request" }, 400);
+
+    const result = await requestTakedown({ findingId: c.req.param("id"), userId: parsed.data.userId });
+    if (!result.ok) {
+      logger.info({ findingId: c.req.param("id"), reason: result.reason }, "takedown refused");
+      // The refusal quotes what the next one would cost, so the customer can
+      // act on it rather than only being told no.
+      const allowance =
+        result.reason === "allowance_exhausted"
+          ? enforcementAllowance(await getCustomer(parsed.data.userId))
+          : null;
+      return c.json(
+        {
+          error: result.reason,
+          ...(allowance
+            ? { overageUsd: allowance.overageUsd, used: allowance.used, included: allowance.included }
+            : {}),
+        },
+        REFUSAL_STATUS[result.reason] ?? 400,
+      );
+    }
+
+    // Capture runs out of band: a full-page screenshot plus two registry
+    // lookups takes tens of seconds, and the customer should not hold a
+    // connection open for it.
+    await evidenceQueue.add(
+      "evidence",
+      { takedownId: result.takedownId },
+      { jobId: evidenceJobId(result.takedownId) },
+    );
+
+    logger.info({ takedownId: result.takedownId, findingId: c.req.param("id") }, "takedown requested");
+    return c.json({ takedownId: result.takedownId, status: "capturing_evidence" }, 201);
+  });
+
+  api.get("/takedowns/:id", async (c) => {
+    const userId = c.req.query("userId") ?? "";
+    const takedown = await getTakedown(c.req.param("id"));
+    if (!takedown) return c.json({ error: "not_found" }, 404);
+
+    const isOwner = takedown.requestedByUserId === userId;
+    if (!isOwner && !(await requireAdmin(userId))) return c.json({ error: "not_found" }, 404);
+
+    const finding = await getFinding(takedown.findingId);
+    // Short-lived signed URL: the bundle contains the customer's evidence and
+    // the bucket stays private.
+    const evidenceUrl = takedown.evidenceBundleKey
+      ? await signedUrlFor(takedown.evidenceBundleKey, 900)
+      : null;
+
+    return c.json({
+      takedown: {
+        id: takedown.id,
+        status: takedown.status,
+        channel: takedown.channel,
+        url: finding?.url ?? null,
+        severity: finding?.severity ?? null,
+        category: finding?.category ?? null,
+        hasEvidence: Boolean(takedown.evidenceBundleKey),
+        evidenceUrl,
+        outcomeNote: takedown.outcomeNote,
+        declinedReason: takedown.declinedReason,
+        submittedAt: takedown.submittedAt,
+        resolvedAt: takedown.resolvedAt,
+        createdAt: takedown.createdAt,
+      },
+    });
+  });
+
+  api.get("/brands/:id/takedowns", async (c) => {
+    const userId = c.req.query("userId") ?? "";
+    const brand = await getDb().query.brands.findFirst({ where: eq(brands.id, c.req.param("id")) });
+    if (!brand) return c.json({ error: "not_found" }, 404);
+    if (brand.ownerUserId !== userId && !(await requireAdmin(userId))) {
+      return c.json({ error: "not_found" }, 404);
+    }
+
+    const rows = await listTakedownsForBrand(brand.id);
+    return c.json({
+      takedowns: rows.map((t) => ({
+        id: t.id,
+        findingId: t.findingId,
+        status: t.status,
+        channel: t.channel,
+        hasEvidence: Boolean(t.evidenceBundleKey),
+        outcomeNote: t.outcomeNote,
+        submittedAt: t.submittedAt,
+        createdAt: t.createdAt,
+      })),
+    });
+  });
+
+  /**
+   * Retry a capture that was blocked. Manual and admin-only on purpose: the
+   * usual reason for `blocked_no_evidence` is a site that defeats the browser,
+   * and hammering it automatically changes nothing except our reputation with
+   * that host.
+   */
+  api.post("/admin/takedowns/:id/recapture", async (c) => {
+    const parsed = z.object({ userId: z.uuid() }).safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: "invalid_request" }, 400);
+    if (!(await requireAdmin(parsed.data.userId))) return c.json({ error: "not_found" }, 404);
+
+    const takedown = await getTakedown(c.req.param("id"));
+    if (!takedown) return c.json({ error: "not_found" }, 404);
+    if (takedown.evidenceBundleKey) return c.json({ error: "already_captured" }, 409);
+
+    await updateTakedown(takedown.id, { status: "draft", outcomeNote: null });
+    // A fresh job id: the original completed, and BullMQ will not re-run a
+    // deterministic id that is still in the completed set.
+    await evidenceQueue.add(
+      "evidence",
+      { takedownId: takedown.id },
+      { jobId: `${evidenceJobId(takedown.id)}-retry-${takedown.id.slice(0, 8)}-${Date.now()}` },
+    );
+
+    logger.info({ takedownId: takedown.id, by: parsed.data.userId }, "evidence recapture queued");
+    return c.json({ status: "capturing_evidence" });
   });
 
   api.post("/billing/sync", async (c) => {

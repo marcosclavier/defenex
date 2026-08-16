@@ -14,3 +14,8 @@ export function scanJobId(scanId: string): string {
 export function reportJobId(scanId: string): string {
   return `report-${scanId}`;
 }
+
+/** One capture per takedown: a double-clicked request must not run it twice. */
+export function evidenceJobId(takedownId: string): string {
+  return `evidence-${takedownId}`;
+}

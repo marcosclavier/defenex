@@ -1,4 +1,5 @@
 import { and, eq, gte, inArray, lt, not, sql } from "drizzle-orm";
+import { enforcementAllowance } from "@defenex/shared";
 import { getDb } from "./client.js";
 import {
   brands, customers, findings, queryCache, reports, rightsVerifications, scans,
@@ -153,6 +154,11 @@ export async function listFindings(scanId: string, db: Db = getDb()) {
     where: eq(findings.scanId, scanId),
     orderBy: (f, { desc }) => [desc(f.severity)],
   });
+}
+
+/** Single finding by id — the takedown flow starts from one, not from a scan. */
+export async function getFinding(id: string, db: Db = getDb()) {
+  return db.query.findings.findFirst({ where: eq(findings.id, id) });
 }
 
 export async function createReport(scanId: string, publicToken: string, db: Db = getDb()) {
@@ -571,10 +577,8 @@ export async function requestTakedown(
   });
   if (existing) return { ok: false, reason: "already_requested" };
 
-  const customer = await getCustomer(input.userId, db);
-  const used = customer?.enforcementsUsed ?? 0;
-  const included = customer?.enforcementsIncluded ?? 0;
-  if (used >= included) return { ok: false, reason: "allowance_exhausted" };
+  const allowance = enforcementAllowance(await getCustomer(input.userId, db));
+  if (allowance.exhausted) return { ok: false, reason: "allowance_exhausted" };
 
   const [row] = await db
     .insert(takedowns)
