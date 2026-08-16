@@ -20,17 +20,20 @@ const Env = z.object({
   SPIDER_CLOUD_API_KEY: z.string().optional(),
 
   /**
-   * Which provider the *scanner* uses for its paid tier.
+   * The paid fetch tier.
    *
-   * Deliberately separate from the key. Evidence capture can adopt spider
-   * safely — it only ever runs on findings that would otherwise be marked
-   * `blocked_no_evidence`, so the worst case is no change. The scanner is a
-   * different matter: the paid tier decides what text the classifier reads and
-   * therefore what counts as a finding, so switching it re-opens detection
-   * quality and must not happen until the gate brands have been re-run against
-   * the recorded baselines. One variable, flipped once, after that passes.
+   * `chain` — spider first, YepAPI where spider was defeated. The default,
+   * because measured head to head neither provider wins outright: spider reads
+   * DHgate, which YepAPI and our own browser both get a 403 from, and costs a
+   * fortieth as much; YepAPI reads Etsy, which spider gets a consistent 403
+   * from. Chaining takes the union of their coverage while the bill stays close
+   * to spider's, since the fallback only fires where the first failed.
+   *
+   * `spider` or `yepapi` pin a single provider. Kept as an escape hatch: this
+   * choice decides what text the classifier reads and therefore what counts as
+   * a finding, so reverting must not need a deploy.
    */
-  SCAN_FETCH_PROVIDER: z.enum(["yepapi", "spider"]).default("yepapi"),
+  SCAN_FETCH_PROVIDER: z.enum(["yepapi", "spider", "chain"]).default("chain"),
   GEMINI_API_KEY: z.string().min(1),
   /**
    * USPTO TSDR key for the advisory rights pre-check. Optional: without it the

@@ -23,3 +23,15 @@ export interface ScrapeProvider {
   /** For logs and cost reporting. */
   readonly name: string;
 }
+
+/**
+ * Below this a fetch was defeated rather than the page being empty. Anti-bot
+ * systems answer 200 with an interstitial carrying almost no text, so length is
+ * as much a signal as status.
+ */
+export const MIN_USEFUL_TEXT = 200;
+
+/** Did we actually see the page, or merely get an answer? */
+export function isUsableScrape(result: ScrapeResult): boolean {
+  return result.statusCode < 400 && result.text.length >= MIN_USEFUL_TEXT;
+}

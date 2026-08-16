@@ -17,7 +17,13 @@ export {
 export { StealthScraper, type StealthConfig } from "./enrich/stealth.js";
 export { htmlToText, extractTitle } from "./enrich/html.js";
 export { SpiderScraper, parseSpiderResponse, type SpiderConfig } from "./enrich/spider.js";
-export type { ScrapeProvider, ScrapeResult } from "./enrich/scrape.js";
+export {
+  isUsableScrape,
+  MIN_USEFUL_TEXT,
+  type ScrapeProvider,
+  type ScrapeResult,
+} from "./enrich/scrape.js";
+export { ChainedScraper, type ChainOptions } from "./enrich/chain.js";
 export {
   GeminiClassifier,
   DEFAULT_CLASSIFIER_MODEL,

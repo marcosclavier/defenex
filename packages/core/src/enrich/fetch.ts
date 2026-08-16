@@ -8,7 +8,7 @@ import {
 import { assertUrlIsFetchable } from "./ssrf.js";
 import { BlockedUrlError } from "../errors.js";
 import { silentLogger, type Logger } from "../ports.js";
-import type { ScrapeProvider } from "./scrape.js";
+import { MIN_USEFUL_TEXT, type ScrapeProvider } from "./scrape.js";
 
 export interface FetcherOptions {
   timeoutMs?: number;
@@ -55,9 +55,6 @@ export interface FetchManyResult {
   stealthCallsUsed: number;
   stealthCostMicros: number;
 }
-
-/** Page text shorter than this means the fetch was defeated, not that the page is empty. */
-const MIN_USEFUL_TEXT = 200;
 
 /**
  * Runs inside the browser, not Node. Typed through globalThis so that `packages/core`

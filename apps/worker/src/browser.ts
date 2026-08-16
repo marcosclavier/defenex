@@ -1,4 +1,10 @@
-import { PageFetcher, SpiderScraper, StealthScraper, type ScrapeProvider } from "@defenex/core";
+import {
+  ChainedScraper,
+  PageFetcher,
+  SpiderScraper,
+  StealthScraper,
+  type ScrapeProvider,
+} from "@defenex/core";
 import { env } from "./env.js";
 import { coreLogger, logger } from "./logger.js";
 
@@ -44,29 +50,38 @@ function yepapi(): ScrapeProvider {
  *
  * Governed by `SCAN_FETCH_PROVIDER` rather than by the presence of a key,
  * because this choice changes what text the classifier reads and therefore what
- * counts as a finding. It stays on the provider whose detection results are
- * known until the gate brands say otherwise.
+ * counts as a finding — and reverting it should not need a deploy.
  */
 export function getScanScraper(): ScrapeProvider {
   if (!scanScraper) {
-    scanScraper = (env.SCAN_FETCH_PROVIDER === "spider" ? spider() : null) ?? yepapi();
+    scanScraper = buildScanScraper();
     logger.info({ provider: scanScraper.name, configured: env.SCAN_FETCH_PROVIDER }, "scan fetch tier");
   }
   return scanScraper;
 }
 
+function buildScanScraper(): ScrapeProvider {
+  const fast = spider();
+  if (env.SCAN_FETCH_PROVIDER === "yepapi" || !fast) return yepapi();
+  if (env.SCAN_FETCH_PROVIDER === "spider") return fast;
+  // Price-ascending: the expensive provider only runs where the cheap one was
+  // defeated, so coverage is the union and the bill stays close to the cheap one.
+  return new ChainedScraper([fast, yepapi()], { logger: coreLogger });
+}
+
 /**
- * The paid tier for evidence capture, which prefers spider whenever it is
- * available.
+ * The paid tier for evidence capture. Always chained where both are available,
+ * regardless of the scanner's setting.
  *
- * Safe to switch independently: this only ever runs after our own browser has
- * already been defeated, so the alternative is not a different screenshot but
- * no screenshot and an unenforceable finding. It also needs the page HTML,
- * which spider returns and the alternative does not.
+ * This only runs after our own browser has already been defeated, so the
+ * alternative is not a different screenshot but no screenshot and a finding
+ * nobody can enforce. Coverage is worth more here than anywhere else, and the
+ * per-takedown cost of a second attempt is irrelevant next to it.
  */
 export function getEvidenceScraper(): ScrapeProvider {
   if (!evidenceScraper) {
-    evidenceScraper = spider() ?? yepapi();
+    const fast = spider();
+    evidenceScraper = fast ? new ChainedScraper([fast, yepapi()], { logger: coreLogger }) : yepapi();
     logger.info({ provider: evidenceScraper.name }, "evidence fetch tier");
   }
   return evidenceScraper;

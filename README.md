@@ -48,9 +48,14 @@ pnpm db:studio       # browse the database
 
 ## Environment
 
-See `.env.example` for the full list. Search runs on **YepAPI** (`YEPAPI_API_KEY`),
-which serves both SERP queries and the stealth scraper. Google Custom Search is
-retained only as a fallback provider and is being discontinued in January 2027.
+See `.env.example` for the full list. SERP queries run on **YepAPI**
+(`YEPAPI_API_KEY`). Google Custom Search is retained only as a fallback provider
+and is being discontinued in January 2027.
+
+The paid fetch tier — the one that reads pages a headless browser cannot — runs
+**spider.cloud** (`SPIDER_CLOUD_API_KEY`) first and falls back to YepAPI where
+spider is defeated. `SCAN_FETCH_PROVIDER` is `chain` by default and can pin a
+single provider (`spider` or `yepapi`) to revert without a deploy.
 
 Run `pnpm preflight` after changing credentials. It verifies the Custom Search API,
 Gemini, the browser, and the SSRF guard, and tells you exactly which one is wrong.
@@ -76,10 +81,24 @@ Things that are non-obvious from the code:
 - **Search is billed per call, not per result.** Depth is therefore free
   coverage: `depth: 100` costs the same $0.01 as `depth: 10`. The only cost of
   going deep is latency (~7s vs ~1.4s).
-- **The stealth scraper is tier 2, never tier 1.** It costs 3x a search call and
-  takes 15-25s, so it fires only where the free browser path was already blocked,
-  under a per-scan cap. It returns no screenshot, so `evidenceSource` records
-  which findings lack visual evidence — takedown notices need it.
+- **The paid scraper is tier 2, never tier 1.** It fires only where the free
+  browser path was already blocked, under a per-scan cap. It returns no
+  screenshot of its own, so `evidenceSource` records which findings lack visual
+  evidence — takedown notices need it.
+- **The paid tier is a chain, because neither provider wins outright.** Measured
+  over six marketplace pages: spider reads DHgate, which YepAPI and our own
+  browser both get a 403 from, and costs a fortieth as much; YepAPI reads Etsy,
+  which spider gets a consistent 403 from. Ordered price-ascending, the chain
+  read 6/6 for $0.0051 where spider alone read 5/6 and YepAPI alone cost $0.12 —
+  the expensive hop only fires where the cheap one failed. Both providers run
+  their output through the same `htmlToText`, so switching changes who fetched a
+  page and nothing about what the classifier reads; otherwise a detection change
+  could not be attributed to the swap rather than to a different extractor.
+- **Evidence capture has a third tier for sites that block us outright.** The
+  markup is fetched through the proxy and rendered locally with an injected
+  `<base>`. The manifest records `captureMethod`, because a screenshot of markup
+  the origin served is not a photograph of the live page and the two must not be
+  presented as the same claim.
 - **`findings` is unique on `(brand_id, url_hash)`.** This is what makes a rescan a
   diff instead of a duplicate pile — upsert bumps `last_seen_at`, and URLs absent for
   two consecutive scans flip to `removed`, which is also the proof a takedown worked.

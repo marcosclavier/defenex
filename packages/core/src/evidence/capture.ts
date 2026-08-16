@@ -3,7 +3,7 @@ import type { Browser, BrowserContext } from "playwright";
 import { assertUrlIsFetchable } from "../enrich/ssrf.js";
 import { BlockedUrlError } from "../errors.js";
 import { silentLogger, type Logger } from "../ports.js";
-import type { ScrapeProvider } from "../enrich/scrape.js";
+import { MIN_USEFUL_TEXT, type ScrapeProvider } from "../enrich/scrape.js";
 import { htmlToText } from "../enrich/html.js";
 
 /**
@@ -80,13 +80,6 @@ export function jsonArtifact(name: string, value: unknown): EvidenceArtifact {
 
 const DEFAULT_UA =
   "Mozilla/5.0 (compatible; DefenexBot/1.0; +https://defenex.com/bot)";
-
-/**
- * Below this, the fetch was defeated rather than the page being empty. The same
- * threshold the scanner uses, for the same reason: anti-bot systems serve a
- * 200 carrying an interstitial with almost no text.
- */
-const MIN_USEFUL_TEXT = 200;
 
 /**
  * Runs inside the browser, not Node. Typed through globalThis so `packages/core`

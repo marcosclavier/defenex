@@ -6,6 +6,7 @@ import { GoogleGenAI } from "@google/genai";
 import { YepApiClient } from "./search/yepapi.js";
 import { GeminiClassifier } from "./classify/gemini.js";
 import { PageFetcher } from "./enrich/fetch.js";
+import { SpiderScraper } from "./enrich/spider.js";
 import { SearchConfigError } from "./errors.js";
 import type { EnrichedResult, ScanInput } from "@defenex/shared";
 
@@ -32,7 +33,7 @@ async function checkEnv(): Promise<void> {
   console.log(`\n${C.bold}Environment${C.reset}`);
   const required = ["YEPAPI_API_KEY", "GEMINI_API_KEY"];
   const optional = [
-    "DATABASE_URL", "REDIS_URL", "RESEND_API_KEY", "APIFY_API_KEY",
+    "SPIDER_CLOUD_API_KEY", "DATABASE_URL", "REDIS_URL", "RESEND_API_KEY", "APIFY_API_KEY",
     "CLOUDFLARE_BUCKET_S3_ENDPOINT", "CLOUDFLARE_BUCKET_S3_ACCESS_KEY_ID",
     "CLOUDFLARE_BUCKET_S3_SECRET_ACCESS_KEY",
   ];
@@ -43,6 +44,33 @@ async function checkEnv(): Promise<void> {
   for (const key of optional) {
     if (!process.env[key]) report(key, "warn", "not set — needed by a later milestone");
     else report(key, true);
+  }
+}
+
+/**
+ * The paid fetch tier, checked against a site that actually refuses a headless
+ * browser. Reaching example.com proves nothing here — the entire reason this
+ * tier exists is the pages that block us.
+ */
+async function checkScraper(): Promise<void> {
+  const key = process.env.SPIDER_CLOUD_API_KEY;
+  console.log(`\n${C.bold}Paid fetch tier (spider.cloud)${C.reset}`);
+  if (!key) {
+    report("SPIDER_CLOUD_API_KEY", "warn", "not set — the scanner falls back to the YepAPI stealth tier");
+    return;
+  }
+
+  try {
+    const scraper = new SpiderScraper({ apiKey: key });
+    const out = await scraper.scrape("https://www.dhgate.com/wholesale/replica+yeti+cooler.html");
+    report("reads a site that blocks our browser", out.text.length > 1_000 && out.statusCode === 200,
+      `status ${out.statusCode}, ${out.text.length} chars, $${(out.costMicros / 1_000_000).toFixed(4)}`);
+    // Evidence capture renders this HTML; without it a blocked finding has no
+    // route to a screenshot at all.
+    report("returns HTML for evidence rendering", Boolean(out.html && out.html.length > 1_000),
+      `${out.html?.length ?? 0} bytes`);
+  } catch (err) {
+    report("spider.cloud reachable", false, err instanceof Error ? err.message : String(err));
   }
 }
 
@@ -155,6 +183,7 @@ async function main(): Promise<void> {
   console.log(`${C.bold}Defenex doctor${C.reset}`);
   await checkEnv();
   await checkSearch();
+  await checkScraper();
   await checkGemini();
   await checkBrowser();
 
