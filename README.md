@@ -49,8 +49,9 @@ pnpm db:studio       # browse the database
 ## Environment
 
 See `.env.example` for the full list. SERP queries run on **YepAPI**
-(`YEPAPI_API_KEY`). Google Custom Search is retained only as a fallback provider
-and is being discontinued in January 2027.
+(`YEPAPI_API_KEY`) with **Serper.dev** (`SERPER_DEV_API_KEY`) behind it as
+failover; `SEARCH_PROVIDER` pins a single provider to revert. Google Custom
+Search is deprecated, unwired, and is being discontinued in January 2027.
 
 The paid fetch tier — the one that reads pages a headless browser cannot — runs
 **spider.cloud** (`SPIDER_CLOUD_API_KEY`) first and falls back to YepAPI where
@@ -78,9 +79,26 @@ Things that are non-obvious from the code:
 - **Search sits behind a `SearchProvider` interface.** Google is retiring the
   Custom Search JSON API in January 2027, and YepAPI is a third party. Nothing
   in the engine depends on a specific vendor.
-- **Search is billed per call, not per result.** Depth is therefore free
-  coverage: `depth: 100` costs the same $0.01 as `depth: 10`. The only cost of
-  going deep is latency (~7s vs ~1.4s).
+- **Search is billed per call, not per result** — on the primary. Depth is
+  therefore free coverage there: `depth: 100` costs the same $0.01 as
+  `depth: 10`, and the only cost of going deep is latency. This is *not* true of
+  the failover: Serper accepts `num` and ignores it, returning ~10 organic
+  results per call and billing each page, so depth costs money whenever the
+  chain has fallen through.
+- **A search outage degrades a scan; it does not delete one.** A failed query
+  costs its own results and nothing else, and the scan is recorded `partial`
+  with the count of what it missed — telling a customer "nothing found" after
+  covering a third of the ground would be false. When every provider is
+  unreachable, a cached SERP past its TTL is served rather than nothing.
+- **The search cache is keyed on the question, not on who was asked.** That is
+  what makes a warm cache an outage buffer: a query the primary cached
+  yesterday is served today without buying it again from the fallback. It is
+  only safe because both providers front the same index; a provider with a
+  different index would need its own namespace.
+- **The failover sees less than the primary.** Serper returns only organic
+  results — no ad placements, no product carousels, no malicious flag — so a
+  fallback scan scores without signals the primary supplies. `scans.search_provider`
+  records which one answered, because a thin report needs an explanation.
 - **The paid scraper is tier 2, never tier 1.** It fires only where the free
   browser path was already blocked, under a per-scan cap. It returns no
   screenshot of its own, so `evidenceSource` records which findings lack visual

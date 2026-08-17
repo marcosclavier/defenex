@@ -13,6 +13,31 @@ const Env = z.object({
 
   YEPAPI_API_KEY: z.string().min(1),
   /**
+   * Serper.dev — the failover SERP provider. Optional: without it the search
+   * tier is single-vendor again, which is the state this replaced.
+   */
+  SERPER_DEV_API_KEY: z.string().optional(),
+  /**
+   * Price of one Serper credit in millionths of a dollar. Depends on the active
+   * plan, and it feeds both the spend circuit breaker and the cost reported to
+   * customers, so a wrong value is wrong in two places.
+   */
+  SERPER_COST_MICROS_PER_CALL: z.coerce.number().default(500),
+  /**
+   * Pages per query on the fallback. Serper ignores `num` and returns about ten
+   * organic results per call, billing each page separately — so unlike the
+   * primary, depth costs money here. Five pages is roughly SEARCH_DEPTH.
+   */
+  SERPER_MAX_PAGES: z.coerce.number().min(1).max(10).default(5),
+  /**
+   * Which SERP provider the scanner uses.
+   *
+   * `chain` tries the primary and falls back. Pinning a single provider is the
+   * revert path: this choice decides what the classifier is given to read, so
+   * changing it must not need a deploy.
+   */
+  SEARCH_PROVIDER: z.enum(["chain", "yepapi", "serper"]).default("chain"),
+  /**
    * spider.cloud. Roughly a fortieth of the price of the YepAPI stealth tier
    * and several times faster, and it returns page HTML, which is what lets
    * evidence capture photograph a site that refuses our own browser.
@@ -85,6 +110,8 @@ const Env = z.object({
   SCAN_QUERY_BUDGET: z.coerce.number().default(15),
   SEARCH_DEPTH: z.coerce.number().default(50),
   SEARCH_DAILY_CAP: z.coerce.number().default(5000),
+  /** Separate cap: the two vendors are priced an order of magnitude apart. */
+  SERPER_DAILY_CAP: z.coerce.number().default(5000),
   /**
    * Paid fetch calls per scan, by tier. Anonymous scans get a small allowance
    * so they still return something useful on bot-blocked marketplaces, without

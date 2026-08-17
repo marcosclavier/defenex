@@ -71,6 +71,8 @@ export async function runScan(input: ScanInput, opts: RunScanOptions): Promise<S
   let queriesRun = 0;
   let searchCostMicros = 0;
   const searchFailures: string[] = [];
+  // Which provider each query actually came from, when the tier is a chain.
+  const answeredBy = new Set<string>();
 
   /**
    * A failed query costs its own results, not the scan's.
@@ -90,6 +92,8 @@ export async function runScan(input: ScanInput, opts: RunScanOptions): Promise<S
       });
       queriesRun += outcome.callsSpent;
       searchCostMicros += outcome.costMicros;
+      if (outcome.provider) answeredBy.add(outcome.provider);
+      if (outcome.stale) answeredBy.add("stale-cache");
       return outcome;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -214,6 +218,7 @@ export async function runScan(input: ScanInput, opts: RunScanOptions): Promise<S
       queriesRun,
       queriesPlanned: plan.length,
       queriesFailed: searchFailures.length,
+      searchProvider: answeredBy.size > 0 ? [...answeredBy].sort().join("+") : opts.search.name,
       resultsSeen: raw.length,
       resultsAfterAllowlist: kept.length,
       resultsEnriched: enriched.length,

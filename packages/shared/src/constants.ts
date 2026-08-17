@@ -27,6 +27,25 @@ export const SEARCH_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const SEARCH_STALE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
+ * Serper.dev — the failover SERP provider.
+ *
+ * Unlike YepAPI, depth is NOT free here. Measured against the live API on both
+ * the free and paid tiers: `num` is accepted and ignored, and a call returns
+ * about ten organic results whatever you ask for. `page` is the only depth
+ * lever and each page is a separate credit, which makes this the Google Custom
+ * Search cost model rather than YepAPI's.
+ */
+export const SERPER_RESULTS_PER_PAGE = 10;
+/** 5 pages ≈ 50 results, matching the default SEARCH_DEPTH. */
+export const SERPER_DEFAULT_MAX_PAGES = 5;
+/**
+ * Per-credit price, overridable because it depends on the active plan. It
+ * feeds the spend circuit breaker and the cost shown to customers, so a wrong
+ * value is wrong in both places.
+ */
+export const SERPER_COST_MICROS_PER_CALL = 500;
+
+/**
  * Google Custom Search — retained as a fallback provider only.
  * Google is discontinuing the JSON API in January 2027; do not build on it.
  */

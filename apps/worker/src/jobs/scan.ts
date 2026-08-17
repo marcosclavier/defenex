@@ -1,16 +1,11 @@
 import type { Job } from "bullmq";
-import {
-  GeminiClassifier,
-  YepApiClient,
-  normalizeDomain,
-  runScan,
-} from "@defenex/core";
-import { SEARCH_CACHE_TTL_MS, ScanInput } from "@defenex/shared";
+import { GeminiClassifier, normalizeDomain, runScan } from "@defenex/core";
+import { ScanInput } from "@defenex/shared";
 import { listFindings, reconcileFindings, updateScanProgress } from "@defenex/db";
 import { env } from "../env.js";
 import { coreLogger, logger } from "../logger.js";
-import { dbCache, dbQuota } from "../ports.js";
 import { getFetcher } from "../browser.js";
+import { getSearchProvider } from "../search.js";
 import { putObject, screenshotKey } from "../storage/r2.js";
 import { alertQueue, reportQueue, type ScanJobData } from "../queues.js";
 import { reportJobId } from "../job-ids.js";
@@ -42,18 +37,9 @@ export async function processScan(job: Job<ScanJobData>): Promise<void> {
 
   await updateScanProgress(scanId, { status: "running", startedAt, progressStage: "starting", progressPercent: 1 });
 
-  const search = new YepApiClient({
-    apiKey: env.YEPAPI_API_KEY,
-    dailyCap: env.SEARCH_DAILY_CAP,
-    defaultDepth: env.SEARCH_DEPTH,
-    cache: dbCache(SEARCH_CACHE_TTL_MS),
-    quota: dbQuota("yepapi"),
-    logger: coreLogger,
-  });
-
   try {
     const result = await runScan(parsed.data, {
-      search,
+      search: getSearchProvider(),
       classifier: new GeminiClassifier({ apiKey: env.GEMINI_API_KEY, logger: coreLogger }),
       fetcher: getFetcher(),
       logger: coreLogger,
@@ -107,6 +93,7 @@ export async function processScan(job: Job<ScanJobData>): Promise<void> {
       queriesRun: result.stats.queriesRun,
       queriesPlanned: result.stats.queriesPlanned,
       queriesFailed: result.stats.queriesFailed,
+      searchProvider: result.stats.searchProvider,
       resultsSeen: result.stats.resultsSeen,
       findingsCount: result.findings.length,
       costMicros: result.stats.costMicros,
@@ -122,6 +109,7 @@ export async function processScan(job: Job<ScanJobData>): Promise<void> {
       {
         findings: result.findings.length,
         queriesFailed: result.stats.queriesFailed,
+        searchProvider: result.stats.searchProvider,
         new: diff.created,
         reappeared: diff.reappeared,
         removed: diff.removed,

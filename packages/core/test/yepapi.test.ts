@@ -94,20 +94,8 @@ describe("YepApiClient result mapping", () => {
 });
 
 describe("YepApiClient behaviour", () => {
-  it("caches by query so a repeat costs nothing", async () => {
-    const spy = vi.fn(async () =>
-      okResponse([{ position: 1, type: "organic", url: "https://a.test/", domain: "a.test", data: {} }]),
-    );
-    const c = client(spy as unknown as typeof fetch);
-
-    const first = await c.search("same query");
-    const second = await c.search("same query");
-
-    expect(spy).toHaveBeenCalledTimes(1);
-    expect(second.fromCache).toBe(true);
-    expect(second.costMicros).toBe(0);
-    expect(second.results).toEqual(first.results);
-  });
+  // Caching is no longer this class's job — it moved to CachedSearch so that a
+  // warm cache survives a failover. See cached.test.ts.
 
   it("caps depth at the observed provider ceiling", async () => {
     const spy = vi.fn(async () => okResponse([]));
@@ -210,78 +198,5 @@ describe("YepApiClient outage behaviour", () => {
     await assertion;
     expect(doFetch).toHaveBeenCalledTimes(4);
     vi.useRealTimers();
-  });
-
-  // A month-old result set beats an error: infringing listings persist for
-  // weeks, so most of it is still true.
-  it("serves stale cache when the provider cannot be reached", async () => {
-    const stored = [{ url: "https://old.example/", title: "old", snippet: "", displayLink: "old.example", sourceQuery: "q" }];
-    const cache = {
-      get: async () => null,
-      set: async () => {},
-      getStale: async () => stored,
-    };
-    const client = new YepApiClient({
-      apiKey: "k",
-      cache,
-      fetchImpl: (async () => {
-        throw new TypeError("fetch failed");
-      }) as unknown as typeof fetch,
-    });
-
-    vi.useFakeTimers();
-    const pending = client.search("q");
-    await vi.runAllTimersAsync();
-    const out = await pending;
-    vi.useRealTimers();
-    expect(out.results).toEqual(stored);
-    expect(out.stale).toBe(true);
-    expect(out.fromCache).toBe(true);
-    // Nothing was billed for a result we already had.
-    expect(out.costMicros).toBe(0);
-    expect(out.callsSpent).toBe(0);
-  });
-
-  it("rethrows when the provider is down and nothing is cached", async () => {
-    const client = new YepApiClient({
-      apiKey: "k",
-      cache: { get: async () => null, set: async () => {}, getStale: async () => null },
-      fetchImpl: (async () => {
-        throw new TypeError("fetch failed");
-      }) as unknown as typeof fetch,
-    });
-    vi.useFakeTimers();
-    const assertion = expect(client.search("q")).rejects.toThrow();
-    await vi.runAllTimersAsync();
-    await assertion;
-    vi.useRealTimers();
-  });
-
-  // A cache store without the capability simply has no outage buffer; it must
-  // not turn the original failure into a different one.
-  it("tolerates a cache that cannot read stale", async () => {
-    const client = new YepApiClient({
-      apiKey: "k",
-      cache: { get: async () => null, set: async () => {} },
-      fetchImpl: (async () => {
-        throw new TypeError("fetch failed");
-      }) as unknown as typeof fetch,
-    });
-    vi.useFakeTimers();
-    const assertion = expect(client.search("q")).rejects.toThrow(/unreachable/);
-    await vi.runAllTimersAsync();
-    await assertion;
-    vi.useRealTimers();
-  });
-
-  it("never reaches for stale cache on the happy path", async () => {
-    const getStale = vi.fn(async () => null);
-    const client = new YepApiClient({
-      apiKey: "k",
-      cache: { get: async () => null, set: async () => {}, getStale },
-      fetchImpl: (async () => okBody()) as unknown as typeof fetch,
-    });
-    await client.search("q");
-    expect(getStale).not.toHaveBeenCalled();
   });
 });

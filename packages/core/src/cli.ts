@@ -2,6 +2,10 @@ import { parseArgs } from "node:util";
 import { writeFile } from "node:fs/promises";
 import { ScanInput, type Industry } from "@defenex/shared";
 import { YepApiClient } from "./search/yepapi.js";
+import { SerperClient } from "./search/serper.js";
+import { ChainedSearchProvider } from "./search/chain.js";
+import { CachedSearch } from "./search/cached.js";
+import type { SearchProvider } from "./search/types.js";
 import { GeminiClassifier } from "./classify/gemini.js";
 import { PageFetcher } from "./enrich/fetch.js";
 import { StealthScraper } from "./enrich/stealth.js";
@@ -9,7 +13,7 @@ import { SpiderScraper } from "./enrich/spider.js";
 import { runScan } from "./scan.js";
 import { severityLabel } from "./score/index.js";
 import { QuotaExceededError, SearchConfigError } from "./errors.js";
-import { consoleLogger, silentLogger } from "./ports.js";
+import { consoleLogger, silentLogger, type Logger } from "./ports.js";
 
 // Node >= 20.6 can read .env itself; no dotenv dependency needed.
 try {
@@ -26,6 +30,30 @@ const C = {
 const SEVERITY_COLOR: Record<string, string> = {
   critical: C.red, high: C.yellow, medium: C.blue, low: C.grey,
 };
+
+/** Mirrors `apps/worker/src/search.ts`; see the reasoning there. */
+function buildSearchChain(depth: number | undefined, logger: Logger): SearchProvider {
+  const dailyCap = process.env.SEARCH_DAILY_CAP ? Number(process.env.SEARCH_DAILY_CAP) : undefined;
+  const primary = new YepApiClient({
+    apiKey: process.env.YEPAPI_API_KEY ?? "",
+    ...(dailyCap !== undefined ? { dailyCap } : {}),
+    ...(depth !== undefined ? { defaultDepth: depth } : {}),
+    logger,
+  });
+
+  const key = process.env.SERPER_DEV_API_KEY;
+  const mode = process.env.SEARCH_PROVIDER ?? "chain";
+  if (!key || mode === "yepapi") return primary;
+
+  const fallback = new SerperClient({
+    apiKey: key,
+    ...(depth !== undefined ? { defaultDepth: depth } : {}),
+    ...(process.env.SERPER_MAX_PAGES ? { maxPages: Number(process.env.SERPER_MAX_PAGES) } : {}),
+    logger,
+  });
+  if (mode === "serper") return fallback;
+  return new ChainedSearchProvider([primary, fallback], { logger });
+}
 
 function usage(): never {
   console.log(`
@@ -92,10 +120,9 @@ async function main(): Promise<void> {
   const input = parsed.data;
   const logger = values.quiet ? silentLogger : consoleLogger;
 
-  const search = new YepApiClient({
-    apiKey: process.env.YEPAPI_API_KEY ?? "",
-    dailyCap: process.env.SEARCH_DAILY_CAP ? Number(process.env.SEARCH_DAILY_CAP) : undefined,
-    defaultDepth: values.depth ? Number(values.depth) : undefined,
+  // Same selection as the worker, so a gate run exercises what production
+  // would actually do rather than a second code path.
+  const search = new CachedSearch(buildSearchChain(values.depth ? Number(values.depth) : undefined, logger), {
     logger,
   });
   const classifier = new GeminiClassifier({

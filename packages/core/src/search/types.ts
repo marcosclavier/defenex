@@ -20,6 +20,12 @@ export interface SearchOutcome {
    * should say so rather than present them as fresh.
    */
   stale?: boolean;
+  /**
+   * Which provider actually answered. Set by the chain: a fallback covers less
+   * ground and scores without signals the primary supplies, so a scan needs to
+   * be able to say which one it ran on.
+   */
+  provider?: string;
 }
 
 /**

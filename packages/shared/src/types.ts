@@ -156,6 +156,12 @@ export interface ScanResult {
      * present a short list of findings as a complete one.
      */
     queriesFailed: number;
+    /**
+     * Which provider actually answered. A fallback covers less ground and
+     * scores without signals the primary supplies, so "why did this scan find
+     * three things" should be answerable from the record a month later.
+     */
+    searchProvider: string;
     resultsSeen: number;
     resultsAfterAllowlist: number;
     resultsEnriched: number;

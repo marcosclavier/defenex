@@ -1,22 +1,12 @@
-import { createHash } from "node:crypto";
 import {
   DEFAULT_SEARCH_DAILY_CAP,
   DEFAULT_SEARCH_DEPTH,
   MAX_SEARCH_DEPTH,
-  SEARCH_CACHE_TTL_MS,
-  SEARCH_STALE_TTL_MS,
   YEPAPI_COST_MICROS_PER_CALL,
   type SearchResult,
 } from "@defenex/shared";
 import { QuotaExceededError, SearchConfigError, SearchRateLimitError } from "../errors.js";
-import {
-  MemoryCache,
-  MemoryQuota,
-  silentLogger,
-  type CacheStore,
-  type Logger,
-  type QuotaCounter,
-} from "../ports.js";
+import { MemoryQuota, silentLogger, type Logger, type QuotaCounter } from "../ports.js";
 import type { SearchOptions, SearchOutcome, SearchProvider } from "./types.js";
 
 const ENDPOINT = "https://api.yepapi.com/v1/serp/google";
@@ -54,7 +44,6 @@ export interface YepApiConfig {
   apiKey: string;
   dailyCap?: number;
   defaultDepth?: number;
-  cache?: CacheStore;
   quota?: QuotaCounter;
   logger?: Logger;
   fetchImpl?: typeof fetch;
@@ -80,7 +69,6 @@ function readPrice(data: Record<string, unknown> | null | undefined): string | u
 export class YepApiClient implements SearchProvider {
   readonly name = "yepapi";
 
-  private readonly cache: CacheStore;
   private readonly quota: QuotaCounter;
   private readonly log: Logger;
   private readonly dailyCap: number;
@@ -89,7 +77,6 @@ export class YepApiClient implements SearchProvider {
 
   constructor(private readonly config: YepApiConfig) {
     if (!config.apiKey) throw new SearchConfigError("YEPAPI_API_KEY is not set");
-    this.cache = config.cache ?? new MemoryCache(SEARCH_CACHE_TTL_MS);
     this.quota = config.quota ?? new MemoryQuota();
     this.log = config.logger ?? silentLogger;
     this.dailyCap = config.dailyCap ?? DEFAULT_SEARCH_DAILY_CAP;
@@ -109,39 +96,13 @@ export class YepApiClient implements SearchProvider {
     const locationCode = opts.gl ? (LOCATION_CODES[opts.gl.toLowerCase()] ?? DEFAULT_LOCATION_CODE) : DEFAULT_LOCATION_CODE;
     const language = opts.language ?? "en";
 
-    const key = createHash("sha256")
-      .update(JSON.stringify({ p: "yepapi", query, depth, locationCode, language }))
-      .digest("hex");
-
-    const cached = (await this.cache.get(key)) as SearchResult[] | null;
-    if (cached) {
-      this.log.debug("search cache hit", { query });
-      return { results: cached, callsSpent: 0, costMicros: 0, fromCache: true };
-    }
-
     const used = await this.quota.used();
     if (used >= this.dailyCap) throw new QuotaExceededError(used, this.dailyCap);
 
-    let body: YepResponse;
-    try {
-      body = await this.requestWithRetry({ query, depth, location_code: locationCode, language });
-    } catch (err) {
-      // Unreachable, not merely unhelpful: fall back to whatever we last saw
-      // for this query rather than losing it from the scan entirely.
-      const stale = await this.readStale(key);
-      if (stale) {
-        this.log.warn("search failed; serving stale cache", {
-          query,
-          error: err instanceof Error ? err.message : String(err),
-        });
-        return { results: stale, callsSpent: 0, costMicros: 0, fromCache: true, stale: true };
-      }
-      throw err;
-    }
+    const body = await this.requestWithRetry({ query, depth, location_code: locationCode, language });
     await this.quota.consume(1);
 
     const results = this.mapResults(body, query);
-    await this.cache.set(key, results);
 
     this.log.debug("search complete", { query, results: results.length });
     return {
@@ -150,16 +111,6 @@ export class YepApiClient implements SearchProvider {
       costMicros: YEPAPI_COST_MICROS_PER_CALL,
       fromCache: false,
     };
-  }
-
-  private async readStale(key: string): Promise<SearchResult[] | null> {
-    if (!this.cache.getStale) return null;
-    try {
-      return (await this.cache.getStale(key, SEARCH_STALE_TTL_MS)) as SearchResult[] | null;
-    } catch {
-      // The cache being unavailable too is not a reason to lose the original error.
-      return null;
-    }
   }
 
   /**

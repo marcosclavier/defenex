@@ -168,6 +168,12 @@ export const scans = pgTable("scans", {
    * ground would be false.
    */
   queriesFailed: integer("queries_failed").notNull().default(0),
+  /**
+   * Which SERP provider answered. A scan served by the fallback sees fewer
+   * results and scores without the paid, product and malicious signals the
+   * primary supplies — worth knowing when reading a thin report later.
+   */
+  searchProvider: text("search_provider"),
   resultsSeen: integer("results_seen").notNull().default(0),
   findingsCount: integer("findings_count").notNull().default(0),
   costMicros: integer("cost_micros").notNull().default(0),

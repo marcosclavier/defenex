@@ -4,6 +4,8 @@
  */
 import { GoogleGenAI } from "@google/genai";
 import { YepApiClient } from "./search/yepapi.js";
+import { SerperClient } from "./search/serper.js";
+import type { SearchProvider } from "./search/types.js";
 import { GeminiClassifier } from "./classify/gemini.js";
 import { PageFetcher } from "./enrich/fetch.js";
 import { SpiderScraper } from "./enrich/spider.js";
@@ -33,7 +35,7 @@ async function checkEnv(): Promise<void> {
   console.log(`\n${C.bold}Environment${C.reset}`);
   const required = ["YEPAPI_API_KEY", "GEMINI_API_KEY"];
   const optional = [
-    "SPIDER_CLOUD_API_KEY", "DATABASE_URL", "REDIS_URL", "RESEND_API_KEY", "APIFY_API_KEY",
+    "SPIDER_CLOUD_API_KEY", "SERPER_DEV_API_KEY", "DATABASE_URL", "REDIS_URL", "RESEND_API_KEY", "APIFY_API_KEY",
     "CLOUDFLARE_BUCKET_S3_ENDPOINT", "CLOUDFLARE_BUCKET_S3_ACCESS_KEY_ID",
     "CLOUDFLARE_BUCKET_S3_SECRET_ACCESS_KEY",
   ];
@@ -74,31 +76,60 @@ async function checkScraper(): Promise<void> {
   }
 }
 
+/**
+ * The acceptance contract every SERP vendor has to satisfy, run against each
+ * one that is configured rather than only the primary.
+ *
+ * The `site:` assertion is the load-bearing one. Most of what `buildQueries`
+ * generates is `site:`-scoped, so a vendor that does not honour operators does
+ * not merely return worse results — scans silently fill with the brand's own
+ * pages. It is exactly the test that disqualified one candidate provider whose
+ * search endpoint turned out to be scraping DuckDuckGo and returning its ads.
+ */
 async function checkSearch(): Promise<void> {
-  console.log(`\n${C.bold}Search (YepAPI SERP)${C.reset}`);
-  try {
-    const search = new YepApiClient({ apiKey: process.env.YEPAPI_API_KEY ?? "" });
+  const providers: Array<{ label: string; make: () => SearchProvider }> = [
+    {
+      label: "YepAPI SERP",
+      make: () => new YepApiClient({ apiKey: process.env.YEPAPI_API_KEY ?? "" }),
+    },
+  ];
 
-    const out = await search.search("brand protection software", { depth: 10 });
-    report("API reachable", out.results.length > 0,
-      `${out.results.length} result(s), $${(out.costMicros / 1_000_000).toFixed(3)}`);
+  if (process.env.SERPER_DEV_API_KEY) {
+    providers.push({
+      label: "Serper (failover)",
+      make: () => new SerperClient({ apiKey: process.env.SERPER_DEV_API_KEY!, maxPages: 1 }),
+    });
+  }
 
-    // Every open-web query the engine generates relies on Google operators
-    // passing through the vendor untouched. If they stop working, scans
-    // silently fill with the brand's own pages.
-    const site = await search.search('site:dhgate.com "yeti"', { depth: 10 });
-    const offSite = site.results.filter((r) => !r.displayLink.includes("dhgate.com"));
-    report("site: operator honoured", site.results.length > 0 && offSite.length === 0,
-      `${site.results.length} result(s), ${offSite.length} off-site`);
+  for (const { label, make } of providers) {
+    console.log(`\n${C.bold}Search — ${label}${C.reset}`);
+    try {
+      const search = make();
 
-    // Non-US location codes are inferred from the DataForSEO pattern
-    // (2000 + ISO 3166-1 numeric); only 2840/US is vendor-documented.
-    const geo = await search.search('"replica watch"', { depth: 10, gl: "de" });
-    report("location targeting accepted", geo.results.length > 0,
-      `gl=de returned ${geo.results.length} result(s)`);
-  } catch (err) {
-    const msg = err instanceof SearchConfigError ? err.message : String(err);
-    report("API reachable", false, msg);
+      const out = await search.search("brand protection software", { depth: 10 });
+      report("API reachable", out.results.length > 0,
+        `${out.results.length} result(s), $${(out.costMicros / 1_000_000).toFixed(4)}`);
+
+      // Every open-web query the engine generates relies on Google operators
+      // passing through the vendor untouched.
+      const site = await search.search('site:dhgate.com "yeti"', { depth: 10 });
+      const offSite = site.results.filter((r) => !r.displayLink.includes("dhgate.com"));
+      report("site: operator honoured", site.results.length > 0 && offSite.length === 0,
+        `${site.results.length} result(s), ${offSite.length} off-site`);
+
+      const geo = await search.search('"replica watch"', { depth: 10, gl: "de" });
+      report("location targeting accepted", geo.results.length > 0,
+        `gl=de returned ${geo.results.length} result(s)`);
+    } catch (err) {
+      const msg = err instanceof SearchConfigError ? err.message : String(err);
+      // A dead failover is a warning, not a failure: the tier still works.
+      report("API reachable", label.startsWith("YepAPI") ? false : "warn", msg);
+    }
+  }
+
+  if (!process.env.SERPER_DEV_API_KEY) {
+    console.log(`\n${C.bold}Search — Serper (failover)${C.reset}`);
+    report("SERPER_DEV_API_KEY", "warn", "not set — the search tier is single-vendor");
   }
 }
 
