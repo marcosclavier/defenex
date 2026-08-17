@@ -81,7 +81,8 @@ describe("UsptoClient", () => {
   });
 
   it.each([
-    [404, /No US registration found/],
+    // A bodyless 404 is the ambiguous case — see the disambiguation block below.
+    [404, /not proof the registration does not exist/],
     [401, /rejected the API key/],
     [429, /rate limit/],
   ])("maps %i to a readable error", async (status, match) => {
@@ -99,5 +100,25 @@ describe("UsptoClient", () => {
 
   it("requires an API key", () => {
     expect(() => new UsptoClient({ apiKey: "" })).toThrow(RightsLookupError);
+  });
+});
+
+describe("UsptoClient 404 disambiguation", () => {
+  const client = (fetchImpl: typeof fetch) => new UsptoClient({ apiKey: "k", fetchImpl });
+
+  /**
+   * Verified against the live service: no key gives 401, but a wrong key gives
+   * 404 — indistinguishable by status from a registration that does not exist.
+   */
+  it("does not assert a registration is missing when the key may have been refused", async () => {
+    const c = client((async () => new Response(" BACKEND RESPONSE STATUS: 404", { status: 404 })) as unknown as typeof fetch);
+    // The admin reading this must not reject a customer's claim on our own
+    // credential problem.
+    await expect(c.lookup("4213456")).rejects.toThrow(/not proof the registration does not exist/);
+  });
+
+  it("still reports a genuine miss as a miss", async () => {
+    const c = client((async () => new Response(JSON.stringify({ error: "not found" }), { status: 404 })) as unknown as typeof fetch);
+    await expect(c.lookup("4213456")).rejects.toThrow(/No US registration found/);
   });
 });

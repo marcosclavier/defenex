@@ -95,20 +95,33 @@ export async function processScan(job: Job<ScanJobData>): Promise<void> {
 
     const diff = await reconcileFindings(brandId, scanId, rows);
 
+    // A scan that could not run every query it planned is `partial`, not
+    // `completed`. The distinction is the difference between "we looked and
+    // found little" and "we could not finish looking", and only one of those
+    // is a statement we are entitled to make to a customer.
+    const degraded = result.stats.queriesFailed > 0;
     await updateScanProgress(scanId, {
-      status: "completed",
+      status: degraded ? "partial" : "completed",
       progressStage: "done",
       progressPercent: 100,
       queriesRun: result.stats.queriesRun,
+      queriesPlanned: result.stats.queriesPlanned,
+      queriesFailed: result.stats.queriesFailed,
       resultsSeen: result.stats.resultsSeen,
       findingsCount: result.findings.length,
       costMicros: result.stats.costMicros,
+      ...(degraded
+        ? {
+            error: `search covered ${result.stats.queriesPlanned - result.stats.queriesFailed} of ${result.stats.queriesPlanned} queries`,
+          }
+        : {}),
       finishedAt: new Date(),
     });
 
     log.info(
       {
         findings: result.findings.length,
+        queriesFailed: result.stats.queriesFailed,
         new: diff.created,
         reappeared: diff.reappeared,
         removed: diff.removed,

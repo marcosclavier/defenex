@@ -59,7 +59,24 @@ export class UsptoClient {
       headers: { "USPTO-API-KEY": this.config.apiKey, accept: "application/json" },
     });
 
+    /**
+     * TSDR answers 404 both for a registration that does not exist and for an
+     * API key it does not recognise — verified against the live service: no key
+     * gives 401, but a *wrong* key gives 404, identical to a missing record.
+     *
+     * Reporting that as "no such registration" would tell a customer their
+     * trademark does not exist because our credentials are bad. The gateway
+     * body distinguishes them: a real TSDR miss returns JSON, a rejected key
+     * returns a plain-text gateway line.
+     */
     if (res.status === 404) {
+      const body = await res.text().catch(() => "");
+      if (!body.trimStart().startsWith("{")) {
+        throw new RightsLookupError(
+          `USPTO returned no record for ${regNumber}. A refused API key looks identical, ` +
+            `so this is not proof the registration does not exist — check the key before rejecting the claim.`,
+        );
+      }
       throw new RightsLookupError(`No US registration found for ${regNumber}`);
     }
     if (res.status === 401 || res.status === 403) {

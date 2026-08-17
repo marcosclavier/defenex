@@ -70,22 +70,58 @@ export async function runScan(input: ScanInput, opts: RunScanOptions): Promise<S
 
   let queriesRun = 0;
   let searchCostMicros = 0;
+  const searchFailures: string[] = [];
 
+  /**
+   * A failed query costs its own results, not the scan's.
+   *
+   * This used to throw straight out of `runScan`: one provider hiccup out of
+   * fifteen queries discarded everything the other fourteen had found, and the
+   * runners still in flight kept billing for results nobody would see. A scan
+   * that covers most of the ground is worth far more than no scan, so long as
+   * it says which ground it missed — which `queriesFailed` is for.
+   */
   const searchOutcomes = await mapLimit(plan, opts.searchConcurrency ?? 5, async (p, i) => {
-    const outcome = await opts.search.search(p.q, {
-      ...(opts.depth !== undefined ? { depth: opts.depth } : {}),
-      ...(p.gl ? { gl: p.gl } : {}),
-    });
-    queriesRun += outcome.callsSpent;
-    searchCostMicros += outcome.costMicros;
     progress(`searching (${i + 1}/${plan.length})`, 5 + Math.round((i / plan.length) * 25));
-    return outcome;
+    try {
+      const outcome = await opts.search.search(p.q, {
+        ...(opts.depth !== undefined ? { depth: opts.depth } : {}),
+        ...(p.gl ? { gl: p.gl } : {}),
+      });
+      queriesRun += outcome.callsSpent;
+      searchCostMicros += outcome.costMicros;
+      return outcome;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      searchFailures.push(`${p.q}: ${message}`);
+      log.warn("search query failed", { query: p.q, error: message });
+      return null;
+    }
   });
 
-  const raw: SearchResult[] = searchOutcomes.flatMap((o) => o.results);
+  // Every query failing is a different thing from some of them failing: there
+  // is no partial coverage to report, only an outage.
+  if (searchFailures.length === plan.length) {
+    throw new Error(
+      `every search query failed (${plan.length}) — ${searchFailures.slice(0, 3).join("; ")}`,
+    );
+  }
+
+  const raw: SearchResult[] = searchOutcomes
+    .filter((o): o is NonNullable<typeof o> => o !== null)
+    .flatMap((o) => o.results);
+
+  if (searchFailures.length > 0) {
+    log.warn("search partially degraded", {
+      failed: searchFailures.length,
+      planned: plan.length,
+      reasons: searchFailures.slice(0, 3),
+    });
+  }
   log.info("search complete", {
     provider: opts.search.name,
     queries: plan.length,
+    queriesFailed: searchFailures.length,
     apiCalls: queriesRun,
     results: raw.length,
   });
@@ -176,6 +212,8 @@ export async function runScan(input: ScanInput, opts: RunScanOptions): Promise<S
     diagnostics,
     stats: {
       queriesRun,
+      queriesPlanned: plan.length,
+      queriesFailed: searchFailures.length,
       resultsSeen: raw.length,
       resultsAfterAllowlist: kept.length,
       resultsEnriched: enriched.length,

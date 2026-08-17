@@ -16,6 +16,17 @@ export const DEFAULT_SCAN_QUERY_BUDGET = 15;
 export const SEARCH_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
+ * How far past its TTL a cached SERP may be served when the provider cannot be
+ * reached at all.
+ *
+ * Never used on the happy path. During an outage a month-old result set is a
+ * far better answer than an error: infringing listings persist for weeks, so
+ * most of it is still true, and the alternative is telling a customer we found
+ * nothing when in fact we could not look.
+ */
+export const SEARCH_STALE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
  * Google Custom Search — retained as a fallback provider only.
  * Google is discontinuing the JSON API in January 2027; do not build on it.
  */

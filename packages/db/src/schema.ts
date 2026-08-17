@@ -158,6 +158,16 @@ export const scans = pgTable("scans", {
   progressStage: text("progress_stage"),
   progressPercent: integer("progress_percent").notNull().default(0),
   queriesRun: integer("queries_run").notNull().default(0),
+  queriesPlanned: integer("queries_planned").notNull().default(0),
+  /**
+   * Queries the search provider could not answer.
+   *
+   * Non-zero means this scan looked at less than it intended to, and a short
+   * findings list is not evidence of a clean brand. Recorded so the report can
+   * say so — telling a customer "nothing found" after covering a third of the
+   * ground would be false.
+   */
+  queriesFailed: integer("queries_failed").notNull().default(0),
   resultsSeen: integer("results_seen").notNull().default(0),
   findingsCount: integer("findings_count").notNull().default(0),
   costMicros: integer("cost_micros").notNull().default(0),

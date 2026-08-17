@@ -10,6 +10,9 @@ export function dbCache(ttlMs: number): CacheStore {
   return {
     get: (key) => cacheGet(key, ttlMs),
     set: (key, value) => cacheSet(key, value),
+    // Same row, a longer bound. `cacheGet` already takes the TTL as an
+    // argument, so an outage buffer needs no schema change.
+    getStale: (key, staleTtlMs) => cacheGet(key, staleTtlMs),
   };
 }
 

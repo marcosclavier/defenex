@@ -149,6 +149,13 @@ export interface ScanResult {
   diagnostics: PageDiagnostic[];
   stats: {
     queriesRun: number;
+    queriesPlanned: number;
+    /**
+     * Queries the provider could not answer. Non-zero means the scan covered
+     * less ground than it planned to, which the report has to say rather than
+     * present a short list of findings as a complete one.
+     */
+    queriesFailed: number;
     resultsSeen: number;
     resultsAfterAllowlist: number;
     resultsEnriched: number;

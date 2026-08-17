@@ -4,6 +4,7 @@ import {
   DEFAULT_SEARCH_DEPTH,
   MAX_SEARCH_DEPTH,
   SEARCH_CACHE_TTL_MS,
+  SEARCH_STALE_TTL_MS,
   YEPAPI_COST_MICROS_PER_CALL,
   type SearchResult,
 } from "@defenex/shared";
@@ -121,7 +122,22 @@ export class YepApiClient implements SearchProvider {
     const used = await this.quota.used();
     if (used >= this.dailyCap) throw new QuotaExceededError(used, this.dailyCap);
 
-    const body = await this.requestWithRetry({ query, depth, location_code: locationCode, language });
+    let body: YepResponse;
+    try {
+      body = await this.requestWithRetry({ query, depth, location_code: locationCode, language });
+    } catch (err) {
+      // Unreachable, not merely unhelpful: fall back to whatever we last saw
+      // for this query rather than losing it from the scan entirely.
+      const stale = await this.readStale(key);
+      if (stale) {
+        this.log.warn("search failed; serving stale cache", {
+          query,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return { results: stale, callsSpent: 0, costMicros: 0, fromCache: true, stale: true };
+      }
+      throw err;
+    }
     await this.quota.consume(1);
 
     const results = this.mapResults(body, query);
@@ -134,6 +150,16 @@ export class YepApiClient implements SearchProvider {
       costMicros: YEPAPI_COST_MICROS_PER_CALL,
       fromCache: false,
     };
+  }
+
+  private async readStale(key: string): Promise<SearchResult[] | null> {
+    if (!this.cache.getStale) return null;
+    try {
+      return (await this.cache.getStale(key, SEARCH_STALE_TTL_MS)) as SearchResult[] | null;
+    } catch {
+      // The cache being unavailable too is not a reason to lose the original error.
+      return null;
+    }
   }
 
   /**
@@ -198,13 +224,33 @@ export class YepApiClient implements SearchProvider {
     const MAX_ATTEMPTS = 4;
     let lastStatus = 0;
 
+    let lastNetworkError: string | null = null;
+
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-      const res = await this.doFetch(ENDPOINT, {
-        method: "POST",
-        headers: { "x-api-key": this.config.apiKey, "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      /**
+       * A rejecting fetch — DNS failure, connection refused, TLS error — is
+       * the vendor being *down*, which is the exact case this ladder exists
+       * for. It used to escape it: the rejection propagated raw on the first
+       * attempt with no backoff and no typed error, so the one outage the
+       * retries were written for was the one they did not cover.
+       */
+      let res: Response;
+      try {
+        res = await this.doFetch(ENDPOINT, {
+          method: "POST",
+          headers: { "x-api-key": this.config.apiKey, "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      } catch (err) {
+        lastNetworkError = err instanceof Error ? err.message : String(err);
+        const backoff = 2 ** attempt * 700;
+        this.log.warn("search network error", { attempt, backoff, error: lastNetworkError });
+        if (attempt < MAX_ATTEMPTS - 1) await sleep(backoff);
+        continue;
+      }
+
       lastStatus = res.status;
+      lastNetworkError = null;
 
       if (res.ok) {
         const body = (await res.json()) as YepResponse;
@@ -243,7 +289,9 @@ export class YepApiClient implements SearchProvider {
     }
 
     throw new SearchRateLimitError(
-      `YepAPI still failing with ${lastStatus} after ${MAX_ATTEMPTS} attempts`,
+      lastNetworkError
+        ? `YepAPI unreachable after ${MAX_ATTEMPTS} attempts — ${lastNetworkError}`
+        : `YepAPI still failing with ${lastStatus} after ${MAX_ATTEMPTS} attempts`,
     );
   }
 }

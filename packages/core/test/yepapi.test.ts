@@ -169,3 +169,119 @@ describe("YepApiClient behaviour", () => {
     expect(() => new YepApiClient({ apiKey: "" })).toThrow(SearchConfigError);
   });
 });
+
+describe("YepApiClient outage behaviour", () => {
+  const okBody = () =>
+    Response.json({ ok: true, data: { results: [{ type: "organic", url: "https://x.example/", title: "t", description: "d", domain: "x.example" }] } });
+
+  /**
+   * The vendor being unreachable is the exact case the retry ladder exists
+   * for, and it used to be the one case that escaped it — a rejecting fetch
+   * propagated raw on the first attempt with no backoff.
+   */
+  it("retries a rejecting fetch instead of letting it escape", async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    const doFetch = vi.fn(async () => {
+      calls += 1;
+      if (calls < 3) throw new TypeError("fetch failed");
+      return okBody();
+    });
+    const client = new YepApiClient({ apiKey: "k", fetchImpl: doFetch as unknown as typeof fetch });
+    // Fake timers, or the test sits through the real 700/1400ms backoff.
+    const pending = client.search("q");
+    await vi.runAllTimersAsync();
+    const out = await pending;
+    expect(out.results).toHaveLength(1);
+    expect(doFetch).toHaveBeenCalledTimes(3);
+    vi.useRealTimers();
+  });
+
+  it("reports the network error when every attempt is unreachable", async () => {
+    vi.useFakeTimers();
+    const doFetch = vi.fn(async () => {
+      throw new TypeError("ECONNREFUSED");
+    });
+    const client = new YepApiClient({ apiKey: "k", fetchImpl: doFetch as unknown as typeof fetch });
+    // The assertion is attached before the timers run, or the rejection lands
+    // with no handler and Vitest reports it as an unhandled error.
+    const assertion = expect(client.search("q")).rejects.toThrow(/unreachable.*ECONNREFUSED/);
+    await vi.runAllTimersAsync();
+    await assertion;
+    expect(doFetch).toHaveBeenCalledTimes(4);
+    vi.useRealTimers();
+  });
+
+  // A month-old result set beats an error: infringing listings persist for
+  // weeks, so most of it is still true.
+  it("serves stale cache when the provider cannot be reached", async () => {
+    const stored = [{ url: "https://old.example/", title: "old", snippet: "", displayLink: "old.example", sourceQuery: "q" }];
+    const cache = {
+      get: async () => null,
+      set: async () => {},
+      getStale: async () => stored,
+    };
+    const client = new YepApiClient({
+      apiKey: "k",
+      cache,
+      fetchImpl: (async () => {
+        throw new TypeError("fetch failed");
+      }) as unknown as typeof fetch,
+    });
+
+    vi.useFakeTimers();
+    const pending = client.search("q");
+    await vi.runAllTimersAsync();
+    const out = await pending;
+    vi.useRealTimers();
+    expect(out.results).toEqual(stored);
+    expect(out.stale).toBe(true);
+    expect(out.fromCache).toBe(true);
+    // Nothing was billed for a result we already had.
+    expect(out.costMicros).toBe(0);
+    expect(out.callsSpent).toBe(0);
+  });
+
+  it("rethrows when the provider is down and nothing is cached", async () => {
+    const client = new YepApiClient({
+      apiKey: "k",
+      cache: { get: async () => null, set: async () => {}, getStale: async () => null },
+      fetchImpl: (async () => {
+        throw new TypeError("fetch failed");
+      }) as unknown as typeof fetch,
+    });
+    vi.useFakeTimers();
+    const assertion = expect(client.search("q")).rejects.toThrow();
+    await vi.runAllTimersAsync();
+    await assertion;
+    vi.useRealTimers();
+  });
+
+  // A cache store without the capability simply has no outage buffer; it must
+  // not turn the original failure into a different one.
+  it("tolerates a cache that cannot read stale", async () => {
+    const client = new YepApiClient({
+      apiKey: "k",
+      cache: { get: async () => null, set: async () => {} },
+      fetchImpl: (async () => {
+        throw new TypeError("fetch failed");
+      }) as unknown as typeof fetch,
+    });
+    vi.useFakeTimers();
+    const assertion = expect(client.search("q")).rejects.toThrow(/unreachable/);
+    await vi.runAllTimersAsync();
+    await assertion;
+    vi.useRealTimers();
+  });
+
+  it("never reaches for stale cache on the happy path", async () => {
+    const getStale = vi.fn(async () => null);
+    const client = new YepApiClient({
+      apiKey: "k",
+      cache: { get: async () => null, set: async () => {}, getStale },
+      fetchImpl: (async () => okBody()) as unknown as typeof fetch,
+    });
+    await client.search("q");
+    expect(getStale).not.toHaveBeenCalled();
+  });
+});

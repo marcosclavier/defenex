@@ -14,6 +14,12 @@ export interface SearchOutcome {
   callsSpent: number;
   costMicros: number;
   fromCache: boolean;
+  /**
+   * Served from cache past its TTL because the provider was unreachable. The
+   * results are real but may be out of date, and a scan that relied on them
+   * should say so rather than present them as fresh.
+   */
+  stale?: boolean;
 }
 
 /**

@@ -7,6 +7,12 @@
 export interface CacheStore {
   get(key: string): Promise<unknown | null>;
   set(key: string, value: unknown): Promise<void>;
+  /**
+   * Read past the normal TTL. Only called when the live provider is
+   * unreachable, so a stale answer beats no answer. Optional: a store that
+   * cannot do it simply has no outage buffer.
+   */
+  getStale?(key: string, ttlMs: number): Promise<unknown | null>;
 }
 
 export interface QuotaCounter {
@@ -42,6 +48,12 @@ export class MemoryCache implements CacheStore {
 
   async set(key: string, value: unknown): Promise<void> {
     this.store.set(key, { value, at: Date.now() });
+  }
+
+  async getStale(key: string, ttlMs: number): Promise<unknown | null> {
+    const hit = this.store.get(key);
+    if (!hit) return null;
+    return Date.now() - hit.at > ttlMs ? null : hit.value;
   }
 }
 
