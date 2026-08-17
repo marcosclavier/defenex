@@ -206,6 +206,17 @@ async function main(): Promise<void> {
   } finally {
     await fetcher.close();
   }
+
+  /**
+   * Exit explicitly now the report is printed.
+   *
+   * Every error path above already does; the success path did not, and
+   * something in the fetch stack keeps a handle alive afterwards — so a scan
+   * that had finished and printed its results sat there until `timeout` killed
+   * it, making a three-brand gate run cost three timeouts rather than three
+   * scans. There is nothing left to do at this point.
+   */
+  process.exit(0);
 }
 
 function printReport(result: Awaited<ReturnType<typeof runScan>>): void {
