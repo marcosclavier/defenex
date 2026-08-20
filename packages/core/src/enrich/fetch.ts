@@ -8,7 +8,7 @@ import {
 import { assertUrlIsFetchable } from "./ssrf.js";
 import { BlockedUrlError } from "../errors.js";
 import { silentLogger, type Logger } from "../ports.js";
-import { MIN_USEFUL_TEXT, type ScrapeProvider } from "./scrape.js";
+import { MIN_CLASSIFIABLE_TEXT, MIN_USEFUL_TEXT, type ScrapeProvider } from "./scrape.js";
 
 export interface FetcherOptions {
   timeoutMs?: number;
@@ -164,6 +164,25 @@ export class PageFetcher {
         if (viaStealth) return viaStealth;
       }
 
+      /**
+       * A page that rendered to nothing is a failure, and used to be reported
+       * as a success with empty text and no error. It made a defeated fetch
+       * indistinguishable from a page we read and found unremarkable: a scan
+       * would say "40 fetched (0 failed)" while a quarter of them had returned
+       * an empty string, and the diagnostic said only NOT_CLASSIFIED with no
+       * reason attached.
+       */
+      if (text.length < MIN_CLASSIFIABLE_TEXT) {
+        return {
+          ...base,
+          finalUrl: page.url(),
+          httpStatus: status,
+          pageTitle,
+          screenshot,
+          fetchError: `page returned ${text.length} characters (status ${status})`,
+        };
+      }
+
       return {
         ...base,
         finalUrl: page.url(),
@@ -206,7 +225,11 @@ export class PageFetcher {
       budget.used += 1;
       budget.costMicros += out.costMicros;
 
-      if (out.text.length < MIN_USEFUL_TEXT) {
+      // Judged on what there is to classify, not on whether the page was fully
+      // rendered: this tier is the last one, so anything it salvaged is all we
+      // are going to get. `MIN_USEFUL_TEXT` still governs whether the same read
+      // counts as having seen the page.
+      if (out.text.length < MIN_CLASSIFIABLE_TEXT) {
         return { ...base, httpStatus: out.statusCode, fetchError: `stealth returned ${out.text.length} chars` };
       }
 

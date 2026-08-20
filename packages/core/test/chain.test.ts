@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { ChainedScraper } from "../src/enrich/chain.js";
-import { isUsableScrape } from "../src/enrich/scrape.js";
+import { bodyCharsOf, isUsableScrape } from "../src/enrich/scrape.js";
 import { SearchConfigError } from "../src/errors.js";
 import type { ScrapeProvider, ScrapeResult } from "../src/enrich/scrape.js";
 
@@ -137,5 +137,70 @@ describe("ChainedScraper", () => {
     await vi.advanceTimersByTimeAsync(5_100);
     await expect(pending).resolves.toMatchObject({ statusCode: 200 });
     vi.useRealTimers();
+  });
+});
+
+describe("ChainedScraper — partial reads", () => {
+  it("returns the best partial rather than discarding it when nobody read the page", async () => {
+    // A client-rendered AliExpress listing answers 200 with no body and an
+    // og:title naming the product. Throwing here reported the fetch as failed
+    // and threw away the one line that says what is being sold.
+    const chain = new ChainedScraper([
+      provider("spider", async () => good({ text: "Replica Acme Cooler 20oz", bodyChars: 0 })),
+      provider("yepapi", async () => {
+        throw new Error("aborted");
+      }),
+    ]);
+    const out = await chain.scrape("https://x.example/");
+    expect(out.text).toBe("Replica Acme Cooler 20oz");
+    // Still not a page we saw, and the caller can tell.
+    expect(isUsableScrape(out)).toBe(false);
+  });
+
+  it("bills every hop on a partial read too", async () => {
+    const chain = new ChainedScraper([
+      provider("spider", async () => good({ text: "short", bodyChars: 0, costMicros: 700 })),
+      provider("yepapi", async () => good({ text: "shorter", bodyChars: 0, costMicros: 30_000 })),
+    ]);
+    expect((await chain.scrape("https://x.example/")).costMicros).toBe(30_700);
+  });
+
+  it("prefers the fullest partial", async () => {
+    const chain = new ChainedScraper([
+      provider("spider", async () => good({ text: "short", bodyChars: 0 })),
+      provider("yepapi", async () => good({ text: "a rather longer partial", bodyChars: 0 })),
+    ]);
+    expect((await chain.scrape("https://x.example/")).text).toBe("a rather longer partial");
+  });
+
+  it("still throws when there is nothing to return", async () => {
+    const chain = new ChainedScraper([
+      provider("spider", async () => good({ statusCode: 403, text: "" })),
+      provider("yepapi", async () => good({ statusCode: 503, text: "" })),
+    ]);
+    await expect(chain.scrape("https://x.example/")).rejects.toThrow(/every paid provider failed/);
+  });
+
+  it("does not offer an error page as a partial read", async () => {
+    const chain = new ChainedScraper([
+      provider("spider", async () => good({ statusCode: 403, text: "Access Denied. Request blocked." })),
+      provider("yepapi", async () => {
+        throw new Error("boom");
+      }),
+    ]);
+    await expect(chain.scrape("https://x.example/")).rejects.toThrow(/every paid provider failed/);
+  });
+});
+
+describe("bodyCharsOf", () => {
+  it("reports document text, not the metadata padded onto it", () => {
+    // What the evidence capture measures before it will build a bundle. An
+    // og:title is enough to classify a listing and not enough to swear we saw
+    // the page, so the two counts have to stay separable.
+    expect(bodyCharsOf(good({ text: "x".repeat(500), bodyChars: 12 }))).toBe(12);
+  });
+
+  it("counts the whole text when a provider does not distinguish", () => {
+    expect(bodyCharsOf(good({ text: "x".repeat(40) }))).toBe(40);
   });
 });

@@ -1,7 +1,7 @@
 import { MAX_PAGE_TEXT_CHARS } from "@defenex/shared";
 import { SearchConfigError } from "../errors.js";
 import { silentLogger, type Logger } from "../ports.js";
-import { extractTitle, htmlToText } from "./html.js";
+import { extractReadableText, extractTitle } from "./html.js";
 import type { ScrapeProvider, ScrapeResult } from "./scrape.js";
 
 /**
@@ -50,10 +50,15 @@ export function parseSpiderResponse(body: unknown, requestedUrl: string): Scrape
   const html = row.content ?? "";
   if (!html) throw new Error("spider returned no content");
 
-  const text = htmlToText(html);
+  const { text, bodyChars } = extractReadableText(html);
+  const truncated = text.slice(0, MAX_PAGE_TEXT_CHARS);
   return {
     statusCode: row.status ?? 0,
-    text: text.slice(0, MAX_PAGE_TEXT_CHARS),
+    text: truncated,
+    // Clamped so it always describes the text actually returned. Long bodies
+    // are truncated far above every threshold that reads this, and thin ones
+    // are never truncated at all, so the clamp cannot change a decision.
+    bodyChars: Math.min(bodyChars, truncated.length),
     title: extractTitle(html),
     finalUrl: row.url ?? requestedUrl,
     // The real figure, not a constant: it varies with page size and compute,

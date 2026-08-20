@@ -46,6 +46,7 @@ export class ChainedScraper implements ScrapeProvider {
     // what the whole chain cost rather than only the hop that succeeded.
     let spentMicros = 0;
     const failures: string[] = [];
+    let best: ScrapeResult | null = null;
 
     for (const [index, provider] of this.providers.entries()) {
       const isLast = index === this.providers.length - 1;
@@ -59,12 +60,25 @@ export class ChainedScraper implements ScrapeProvider {
           }
           return { ...result, costMicros: spentMicros };
         }
+        if (result.statusCode < 400 && result.text.length > (best?.text.length ?? 0)) best = result;
         failures.push(`${provider.name}: status ${result.statusCode}, ${result.text.length} chars`);
       } catch (err) {
         // Including a bad key or an empty balance: the point of a chain is that
         // one provider being unusable does not take the tier down with it.
         failures.push(`${provider.name}: ${err instanceof Error ? err.message : String(err)}`);
       }
+    }
+
+    /**
+     * Nobody read the page, but somebody got something. Throwing here discarded
+     * it: a client-rendered AliExpress listing answers 200 with no body and an
+     * `og:title` naming the product, which is short of "we saw the page" and a
+     * good deal better than "the fetch failed". The caller can still tell the
+     * difference, because `isUsableScrape` says no either way.
+     */
+    if (best) {
+      this.log.info("scrape chain returning a partial read", { url, chars: best.text.length, after: failures });
+      return { ...best, costMicros: spentMicros };
     }
 
     throw new Error(`every paid provider failed for ${url} — ${failures.join("; ")}`);

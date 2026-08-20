@@ -3,7 +3,7 @@ import type { Browser, BrowserContext } from "playwright";
 import { assertUrlIsFetchable } from "../enrich/ssrf.js";
 import { BlockedUrlError } from "../errors.js";
 import { silentLogger, type Logger } from "../ports.js";
-import { MIN_USEFUL_TEXT, type ScrapeProvider } from "../enrich/scrape.js";
+import { bodyCharsOf, MIN_USEFUL_TEXT, type ScrapeProvider } from "../enrich/scrape.js";
 import { htmlToText } from "../enrich/html.js";
 
 /**
@@ -313,12 +313,18 @@ async function captureViaProxy(opts: CaptureOptions, scraper: ScrapeProvider): P
       httpStatus: fetched.statusCode,
     };
   }
-  if (fetched.text.length < MIN_USEFUL_TEXT) {
+  /**
+   * Body text, not `text` — metadata does not count here. A client-rendered
+   * page's `og:title` is enough to tell a classifier what a listing sells, and
+   * it is not a page we can swear we saw. Evidence backs a sworn legal notice.
+   */
+  const bodyChars = bodyCharsOf(fetched);
+  if (bodyChars < MIN_USEFUL_TEXT) {
     return {
-      ...failed(opts.url, capturedAt, `${scraper.name} returned only ${fetched.text.length} characters`),
+      ...failed(opts.url, capturedAt, `${scraper.name} returned only ${bodyChars} characters`),
       captureMethod: "proxy-html-rendered",
       httpStatus: fetched.statusCode,
-      textLength: fetched.text.length,
+      textLength: bodyChars,
     };
   }
 

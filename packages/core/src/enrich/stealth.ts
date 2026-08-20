@@ -1,7 +1,7 @@
 import { STEALTH_COST_MICROS_PER_CALL, MAX_PAGE_TEXT_CHARS } from "@defenex/shared";
 import { SearchConfigError } from "../errors.js";
 import { silentLogger, type Logger } from "../ports.js";
-import { extractTitle, htmlToText } from "./html.js";
+import { extractReadableText, extractTitle } from "./html.js";
 import type { ScrapeProvider, ScrapeResult } from "./scrape.js";
 
 const ENDPOINT = "https://api.yepapi.com/v1/scrape/stealth";
@@ -66,9 +66,12 @@ export class StealthScraper implements ScrapeProvider {
       const raw = body.data?.content ?? "";
       this.log.debug("stealth scrape ok", { url, chars: raw.length });
 
+      const { text, bodyChars } = extractReadableText(raw);
+      const truncated = text.slice(0, MAX_PAGE_TEXT_CHARS);
       return {
         statusCode: body.data?.statusCode ?? 0,
-        text: htmlToText(raw).slice(0, MAX_PAGE_TEXT_CHARS),
+        text: truncated,
+        bodyChars: Math.min(bodyChars, truncated.length),
         title: extractTitle(raw),
         finalUrl: body.data?.url ?? url,
         costMicros: STEALTH_COST_MICROS_PER_CALL,
