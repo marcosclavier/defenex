@@ -153,3 +153,97 @@ describe("priorScore", () => {
     );
   });
 });
+
+describe("priorScore — candidate selection regressions", () => {
+  const base: SearchResult = {
+    url: "https://shop.test/x", title: "", snippet: "",
+    displayLink: "", sourceQuery: "q",
+  };
+
+  it("does not treat an unrelated company's login page as credential harvest", () => {
+    // A YETI scan spent eight of forty fetch slots on the login pages of
+    // yetiairlines.com, yeticycles.com, checkyeti.com and importyeti.com. Each
+    // one only matched because the brand is a substring of an unrelated
+    // company's name and `/login` is ordinary furniture on any company site.
+    const offBrand = { ...base, url: "https://yetiairlines.test/login" };
+    const listing = { ...base, url: "https://dhgate.test/wholesale/yeti-cooler", snippet: "replica" };
+    expect(priorScore(listing, "marketplace", "yeti")).toBeGreaterThan(
+      priorScore(offBrand, "domain_abuse", "yeti"),
+    );
+  });
+
+  it("still ranks a lookalike whose hostname carries the auth word", () => {
+    // yeti-login.webflow.io: a real phishing page and the highest-severity
+    // finding of the gate. The tightening above must not cost us this.
+    const phish = { ...base, url: "https://yeti-login.webflow.io/" };
+    const offBrand = { ...base, url: "https://yetiairlines.test/login" };
+    expect(priorScore(phish, "domain_abuse", "yeti")).toBeGreaterThan(
+      priorScore(offBrand, "domain_abuse", "yeti") + 30,
+    );
+  });
+
+  it("ranks a brand-named page on free hosting that asks for a password", () => {
+    // The lookalike does not have to encode the word when the domain was never
+    // the brand's: acmestore.webflow.io/signin is the same attack.
+    const onDisposable = { ...base, url: "https://acmestore.webflow.io/signin" };
+    const onOwnDomain = { ...base, url: "https://acmestore.test/signin" };
+    expect(priorScore(onDisposable, "domain_abuse", "acme")).toBeGreaterThan(
+      priorScore(onOwnDomain, "domain_abuse", "acme"),
+    );
+  });
+
+  it("ranks a page selling fakes above one writing about them", () => {
+    // Commentary uses the vocabulary more explicitly than sellers do, so it
+    // outranked the real thing: nine of forty fetched YETI pages were articles,
+    // forum threads and videos about counterfeits, all classified LEGITIMATE.
+    const selling = {
+      ...base, url: "https://dhgate.test/wholesale/acme-cooler",
+      title: "Acme Cooler Wholesale", snippet: "replica acme cooler in bulk",
+    };
+    for (const commentary of [
+      { title: "How to spot a fake Acme cooler", snippet: "" },
+      { title: "Real vs fake Acme: we tested both", snippet: "" },
+      { title: "Acme is accusing two residents of selling counterfeits", snippet: "" },
+      { title: "Recruitment scam warning", snippet: "" },
+    ]) {
+      const page = { ...base, url: "https://dhgate.test/wholesale/acme-cooler", ...commentary };
+      expect(priorScore(selling, "marketplace", "Acme")).toBeGreaterThan(
+        priorScore(page, "marketplace", "Acme"),
+      );
+    }
+  });
+
+  it("demotes discussion surfaces even on an enforceable marketplace host", () => {
+    // community.ebay.com threads took three slots and yielded nothing: eBay's
+    // forum is people asking about fakes, not anyone selling them.
+    const thread = { ...base, url: "https://community.ebay.com/t5/Ask-a-Mentor/Fake-Acme/td-p/1" };
+    const listing = { ...base, url: "https://www.ebay.com/itm/226150735475" };
+    expect(priorScore(listing, "marketplace", "Acme")).toBeGreaterThan(
+      priorScore(thread, "marketplace", "Acme"),
+    );
+  });
+
+  it("reads commentary out of the URL path when the snippet is empty", () => {
+    const inPath = { ...base, url: "https://tiktok.test/discover/how-to-know-if-my-acme-cooler-is-fake" };
+    const plain = { ...base, url: "https://tiktok.test/@seller/video/7342016435155209473" };
+    expect(priorScore(plain, "social", "Acme")).toBeGreaterThan(priorScore(inPath, "social", "Acme"));
+  });
+});
+
+describe("priorScore — malformed input", () => {
+  const base: SearchResult = {
+    url: "https://shop.test/x", title: "", snippet: "",
+    displayLink: "", sourceQuery: "q",
+  };
+
+  it("survives a URL path with a malformed percent escape", () => {
+    // decodeURIComponent throws on these, and this runs over every search
+    // result: one bad URL in five hundred would fail the whole scan.
+    expect(() => priorScore({ ...base, url: "https://shop.test/100%-yeti" }, "marketplace", "yeti"))
+      .not.toThrow();
+  });
+
+  it("survives a url that is not a URL at all", () => {
+    expect(() => priorScore({ ...base, url: "not a url" }, "marketplace", "acme")).not.toThrow();
+  });
+});
