@@ -15,24 +15,41 @@ import { defineConfig } from "tsup";
  *    @google/genai, does a dynamic `require("child_process")` that esbuild
  *    cannot represent in an ESM bundle.
  */
+function dependenciesOf(path: string): string[] {
+  const pkg = JSON.parse(readFileSync(new URL(path, import.meta.url), "utf8")) as {
+    dependencies?: Record<string, string>;
+  };
+  return Object.keys(pkg.dependencies ?? {}).filter((n) => !n.startsWith("@defenex/"));
+}
+
+/**
+ * Every external must also be installed next to the bundle, and only the
+ * worker's own manifest puts it there.
+ *
+ * pnpm keeps each package's dependencies under its own `node_modules`, so a
+ * package that only `@defenex/core` depends on does not exist anywhere Node
+ * will look from `apps/worker/dist/`. Marked external and undeclared, it builds
+ * clean, passes CI, and then throws ERR_MODULE_NOT_FOUND on boot — which is how
+ * `fflate` reached a Railway healthcheck. Bundling it instead is not the
+ * alternative: see the note above on third-party CJS.
+ *
+ * Failing here puts the error in `pnpm build`, where CI already runs it.
+ */
 function thirdPartyDeps(): string[] {
-  const manifests = [
-    "package.json",
-    "../../packages/core/package.json",
-    "../../packages/db/package.json",
-    "../../packages/emails/package.json",
-    "../../packages/shared/package.json",
-  ];
-  const names = new Set<string>();
-  for (const path of manifests) {
-    const pkg = JSON.parse(readFileSync(new URL(path, import.meta.url), "utf8")) as {
-      dependencies?: Record<string, string>;
-    };
-    for (const name of Object.keys(pkg.dependencies ?? {})) {
-      if (!name.startsWith("@defenex/")) names.add(name);
-    }
+  const own = new Set(dependenciesOf("package.json"));
+  const workspace = ["core", "db", "emails", "shared"].flatMap((p) =>
+    dependenciesOf(`../../packages/${p}/package.json`),
+  );
+
+  const undeclared = [...new Set(workspace)].filter((n) => !own.has(n)).sort();
+  if (undeclared.length > 0) {
+    throw new Error(
+      `apps/worker/package.json must depend on every package the bundle leaves external, ` +
+        `or Node cannot resolve it at runtime. Missing: ${undeclared.join(", ")}`,
+    );
   }
-  return [...names];
+
+  return [...own];
 }
 
 const external = thirdPartyDeps();
