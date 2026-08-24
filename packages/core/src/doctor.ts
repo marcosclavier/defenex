@@ -173,11 +173,33 @@ async function checkGemini(): Promise<void> {
   ];
 
   const classifier = new GeminiClassifier({ apiKey });
-  const { byIndex, rejectedForBadEvidence } = await classifier.classify(cases.map((c) => c.item), input);
+  const { byIndex, outcomes, rejectedForBadEvidence } = await classifier.classify(
+    cases.map((c) => c.item),
+    input,
+  );
+
+  /**
+   * A dropped batch is not four legitimate pages. Scored the old way it came
+   * out 2/4 — the two LEGITIMATE cases passing by accident — which sends
+   * someone hunting a prompt regression while the actual fault is that the API
+   * never answered.
+   */
+  const dropped = [...outcomes.values()].find((o) => o.status === "batch_failed");
+  if (dropped?.status === "batch_failed") {
+    report("classification sanity", false, `the model call failed: ${dropped.error}`);
+    return;
+  }
 
   let correct = 0;
   cases.forEach((c, i) => {
-    const got = byIndex.get(i)?.category ?? "LEGITIMATE";
+    // Omission is how the model says "nothing here", so it reads as LEGITIMATE;
+    // a rejected quote is a different thing and says so.
+    const missed = outcomes.get(i);
+    const got =
+      byIndex.get(i)?.category ??
+      (missed?.status === "evidence_rejected"
+        ? `${missed.category} with an unusable quote (${missed.reason})`
+        : "LEGITIMATE");
     if (got === c.expect) correct++;
     else console.log(`        ${C.dim}${c.item.url}: expected ${c.expect}, got ${got}${C.reset}`);
   });

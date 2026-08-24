@@ -130,6 +130,27 @@ export interface Finding {
   evidenceSource: EvidenceSource | null;
 }
 
+/**
+ * Why a fetched page ended up with no category.
+ *
+ * A missing verdict used to be reported as `NOT_CLASSIFIED` and nothing else,
+ * which put four unrelated events under one label: a page we never fetched, a
+ * page the model silently skipped, a verdict whose quote could not be verified,
+ * and a whole batch lost to an API error. The first is expected, the last is an
+ * outage. Telling them apart is the difference between "the model looked and
+ * found nothing" and "we never asked".
+ */
+export type ClassifyStatus =
+  | "classified"
+  /** No text to send — the fetch failed or the page rendered to nothing. */
+  | "not_fetched"
+  /** Sent, the batch came back, and the model did not mention this page. */
+  | "model_omitted"
+  /** The model answered and its quote failed verification. */
+  | "evidence_rejected"
+  /** The batch this page was in was dropped after its retries. */
+  | "batch_failed";
+
 /** Per-page trace of what the pipeline did. Essential for tuning precision. */
 export interface PageDiagnostic {
   url: string;
@@ -139,8 +160,11 @@ export interface PageDiagnostic {
   httpStatus: number;
   fetchError: string | null;
   category: FindingCategory | "NOT_CLASSIFIED";
+  /** Present on every row: `classified`, or the reason there is no category. */
+  classifyStatus: ClassifyStatus;
+  /** The rejected verdict and the rule it failed, or the batch's error. */
+  classifyDetail?: string;
   confidence: Confidence | null;
-  evidenceRejected?: boolean;
 }
 
 export interface ScanResult {
@@ -169,6 +193,19 @@ export interface ScanResult {
     stealthCallsUsed: number;
     findingsPublished: number;
     rejectedForBadEvidence: number;
+    /**
+     * Pages sent to the classifier that came back with no verdict at all. The
+     * model omits entries from a batch fairly often, and every omission is a
+     * candidate that was fetched and paid for and then never judged.
+     */
+    classifierOmitted: number;
+    /**
+     * Pages lost because the whole batch they were in was dropped after its
+     * retries. One schema mismatch or one 500 costs up to `batchSize`
+     * candidates at once — a quarter of a default scan — and used to be
+     * indistinguishable from ten pages judged legitimate.
+     */
+    classifierBatchFailures: number;
     searchCostMicros: number;
     stealthCostMicros: number;
     costMicros: number;

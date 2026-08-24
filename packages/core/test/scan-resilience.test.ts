@@ -17,7 +17,9 @@ const input: ScanInput = {
 const emptyOutcome = (): SearchOutcome => ({ results: [], callsSpent: 1, costMicros: 10_000, fromCache: false });
 
 /** Nothing gets past the allowlist, so classification and fetching never run. */
-const idleClassifier: Classifier = { classify: async () => ({ byIndex: new Map(), rejectedForBadEvidence: 0 }) };
+const idleClassifier: Classifier = {
+  classify: async () => ({ byIndex: new Map(), outcomes: new Map(), rejectedForBadEvidence: 0 }),
+};
 const idleFetcher = {
   fetchMany: async () => ({ results: [], stealthCallsUsed: 0, stealthCostMicros: 0 }),
 } as unknown as PageFetcher;

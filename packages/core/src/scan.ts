@@ -1,5 +1,6 @@
 import {
   DEFAULT_SCAN_QUERY_BUDGET,
+  type ClassifyStatus,
   type Finding,
   type PageDiagnostic,
   type ScanInput,
@@ -7,12 +8,40 @@ import {
   type SearchResult,
 } from "@defenex/shared";
 import type { SearchProvider } from "./search/types.js";
-import type { Classifier } from "./classify/gemini.js";
+import type { Classifier, ClassifyOutcome } from "./classify/gemini.js";
 import type { PageFetcher } from "./enrich/fetch.js";
 import { applyAllowlist, normalizeDomain } from "./enrich/allowlist.js";
 import { buildQueries, type QueryKind } from "./queries/templates.js";
 import { priorScore, severityFor } from "./score/index.js";
 import { silentLogger, type Logger } from "./ports.js";
+
+/**
+ * Turn one classifier outcome into something a diagnostic row can state.
+ *
+ * A page with no verdict is not one situation. It may never have been sent, or
+ * been sent and skipped, or answered with a quote that failed verification, or
+ * been in a batch the API lost — and the last of those is an incident rather
+ * than a result, so collapsing them all into `NOT_CLASSIFIED` hid the only one
+ * worth paging about.
+ */
+function readOutcome(
+  outcome: ClassifyOutcome | undefined,
+  wasSent: boolean,
+): { status: ClassifyStatus; detail?: string } {
+  if (!wasSent) return { status: "not_fetched" };
+  if (!outcome) return { status: "model_omitted" };
+
+  switch (outcome.status) {
+    case "classified":
+      return { status: "classified" };
+    case "evidence_rejected":
+      return { status: "evidence_rejected", detail: `${outcome.category}: ${outcome.reason}` };
+    case "batch_failed":
+      return { status: "batch_failed", detail: outcome.error };
+    default:
+      return { status: "model_omitted" };
+  }
+}
 
 export interface RunScanOptions {
   search: SearchProvider;
@@ -164,16 +193,32 @@ export async function runScan(input: ScanInput, opts: RunScanOptions): Promise<S
   // Pages that could not be fetched have no verifiable evidence, so they cannot
   // become findings; excluding them here saves the model call entirely.
   const classifiable = enriched.filter((e) => (e.pageText ?? "").length > 0);
-  const { byIndex, rejectedForBadEvidence } = await opts.classifier.classify(classifiable, input);
+  const indexOfItem = new Map(classifiable.map((item, i) => [item, i]));
+  const { byIndex, outcomes, rejectedForBadEvidence } = await opts.classifier.classify(
+    classifiable,
+    input,
+  );
   progress("scoring", 88);
 
   // ---- 5. score and assemble ----------------------------------------------
   const categoryCounts: Record<string, number> = {};
+  let classifierOmitted = 0;
+  let classifierBatchFailures = 0;
+
   const diagnostics: PageDiagnostic[] = enriched.map((item) => {
-    const idx = classifiable.indexOf(item);
-    const c = idx >= 0 ? byIndex.get(idx) : undefined;
-    const category = c?.category ?? "NOT_CLASSIFIED";
-    categoryCounts[category] = (categoryCounts[category] ?? 0) + 1;
+    const idx = indexOfItem.get(item);
+    const c = idx === undefined ? undefined : byIndex.get(idx);
+    const { status, detail } = readOutcome(idx === undefined ? undefined : outcomes.get(idx), idx !== undefined);
+
+    if (status === "model_omitted") classifierOmitted += 1;
+    if (status === "batch_failed") classifierBatchFailures += 1;
+
+    // Keyed by category when there is one and by the reason there isn't
+    // otherwise, so the summary distinguishes pages judged unremarkable from
+    // pages that were never judged.
+    const countKey = c ? c.category : status.toUpperCase();
+    categoryCounts[countKey] = (categoryCounts[countKey] ?? 0) + 1;
+
     return {
       url: item.url,
       prior: priorByUrl.get(item.url) ?? 0,
@@ -181,7 +226,9 @@ export async function runScan(input: ScanInput, opts: RunScanOptions): Promise<S
       textChars: (item.pageText ?? "").length,
       httpStatus: item.httpStatus,
       fetchError: item.fetchError,
-      category,
+      category: c?.category ?? "NOT_CLASSIFIED",
+      classifyStatus: status,
+      ...(detail !== undefined ? { classifyDetail: detail } : {}),
       confidence: c?.confidence ?? null,
     };
   });
@@ -226,6 +273,8 @@ export async function runScan(input: ScanInput, opts: RunScanOptions): Promise<S
       stealthCallsUsed: fetch.stealthCallsUsed,
       findingsPublished: findings.length,
       rejectedForBadEvidence,
+      classifierOmitted,
+      classifierBatchFailures,
       searchCostMicros,
       stealthCostMicros: fetch.stealthCostMicros,
       costMicros: searchCostMicros + fetch.stealthCostMicros,

@@ -249,6 +249,12 @@ function printReport(result: Awaited<ReturnType<typeof runScan>>): void {
   console.log(`  ${C.dim}Stealth scrapes    ${C.reset}${stats.stealthCallsUsed}`);
   console.log(`  ${C.dim}Findings published ${C.reset}${stats.findingsPublished}`);
   console.log(`  ${C.dim}Rejected (evidence)${C.reset}${stats.rejectedForBadEvidence}`);
+  console.log(`  ${C.dim}No verdict         ${C.reset}${stats.classifierOmitted}`);
+  // Not a result: these pages were fetched, paid for, and then lost to an API
+  // error. Silence here reads as "nothing found", which is the opposite.
+  if (stats.classifierBatchFailures > 0) {
+    console.log(`  ${C.red}Lost to batch error${C.reset} ${stats.classifierBatchFailures}`);
+  }
   console.log(`  ${C.dim}Cost               ${C.reset}$${dollars} ` +
     `${C.dim}(search $${(stats.searchCostMicros / 1e6).toFixed(3)}, ` +
     `stealth $${(stats.stealthCostMicros / 1e6).toFixed(3)})${C.reset}`);
