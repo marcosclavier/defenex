@@ -4,7 +4,7 @@ import { ScanInput } from "@defenex/shared";
 import { listFindings, reconcileFindings, updateScanProgress } from "@defenex/db";
 import { env } from "../env.js";
 import { coreLogger, logger } from "../logger.js";
-import { getFetcher } from "../browser.js";
+import { withBrowser } from "../browser.js";
 import { getSearchProvider } from "../search.js";
 import { putObject, screenshotKey } from "../storage/r2.js";
 import { alertQueue, reportQueue, type ScanJobData } from "../queues.js";
@@ -38,10 +38,10 @@ export async function processScan(job: Job<ScanJobData>): Promise<void> {
   await updateScanProgress(scanId, { status: "running", startedAt, progressStage: "starting", progressPercent: 1 });
 
   try {
-    const result = await runScan(parsed.data, {
+    const result = await withBrowser((fetcher) => runScan(parsed.data, {
       search: getSearchProvider(),
       classifier: new GeminiClassifier({ apiKey: env.GEMINI_API_KEY, logger: coreLogger }),
-      fetcher: getFetcher(),
+      fetcher,
       logger: coreLogger,
       depth: env.SEARCH_DEPTH,
       stealthBudget: job.data.stealthBudget ?? env.STEALTH_BUDGET_ANON,
@@ -51,7 +51,7 @@ export async function processScan(job: Job<ScanJobData>): Promise<void> {
           (err) => log.warn({ err: String(err) }, "progress update failed"),
         );
       },
-    });
+    }));
 
     // Evidence first: upload screenshots before writing rows that reference them.
     const rows = await Promise.all(

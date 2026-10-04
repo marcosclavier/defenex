@@ -9,7 +9,7 @@ import {
 } from "@defenex/core";
 import { getFinding, getTakedown, updateTakedown } from "@defenex/db";
 import { coreLogger, logger } from "../logger.js";
-import { getEvidenceScraper, getFetcher } from "../browser.js";
+import { getEvidenceScraper, withBrowser } from "../browser.js";
 import { putObject } from "../storage/r2.js";
 import { evidenceBundleKey } from "../storage/keys.js";
 import { draftQueue, type EvidenceJobData } from "../queues.js";
@@ -56,15 +56,17 @@ export async function processEvidence(job: Job<EvidenceJobData>): Promise<void> 
 
   await updateTakedown(takedownId, { status: "capturing_evidence" });
 
-  const capture = await capturePage({
-    url: finding.url,
-    browser: await getFetcher().browserHandle(),
-    logger: coreLogger,
-    // Sites worth filing against are the ones that block us hardest, so the
-    // paid tier is not a luxury here — without it the highest-severity
-    // findings would be permanently unenforceable.
-    scraper: getEvidenceScraper(),
-  });
+  const capture = await withBrowser(async (fetcher) =>
+    capturePage({
+      url: finding.url,
+      browser: await fetcher.browserHandle(),
+      logger: coreLogger,
+      // Sites worth filing against are the ones that block us hardest, so the
+      // paid tier is not a luxury here — without it the highest-severity
+      // findings would be permanently unenforceable.
+      scraper: getEvidenceScraper(),
+    }),
+  );
 
   if (!capture.ok) {
     log.warn({ url: finding.url, reason: capture.failure }, "capture failed; blocking takedown");

@@ -74,7 +74,12 @@ function readBodyText(): string {
  * still isolate cookies and storage between hostile pages.
  */
 export class PageFetcher {
-  private browser: Browser | null = null;
+  /**
+   * The launch, not the browser. Concurrent fetches on a cold fetcher all reach
+   * here before the first launch resolves; holding the browser itself let each
+   * of them launch its own Chromium, keep the last, and orphan the rest.
+   */
+  private browser: Promise<Browser> | null = null;
   private readonly timeoutMs: number;
   private readonly wantScreenshot: boolean;
   private readonly log: Logger;
@@ -91,10 +96,15 @@ export class PageFetcher {
     this.stealth = opts.stealth;
   }
 
-  private async getBrowser(): Promise<Browser> {
+  private getBrowser(): Promise<Browser> {
     if (!this.browser) {
-      this.browser = await chromium.launch({
+      const launch = chromium.launch({
         args: ["--disable-dev-shm-usage", "--no-sandbox"],
+      });
+      this.browser = launch;
+      // A failed launch must not be cached, or every later fetch inherits it.
+      launch.catch(() => {
+        if (this.browser === launch) this.browser = null;
       });
     }
     return this.browser;
@@ -280,8 +290,9 @@ export class PageFetcher {
 
   /** Idempotent: signal handlers and normal teardown may both call this. */
   async close(): Promise<void> {
-    const browser = this.browser;
+    const launch = this.browser;
     this.browser = null;
+    const browser = await launch?.catch(() => null);
     await browser?.close().catch(() => {});
   }
 }

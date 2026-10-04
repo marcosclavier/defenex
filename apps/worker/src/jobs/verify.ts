@@ -4,9 +4,10 @@ import {
   recordVerification,
   VERIFY_MAX_ATTEMPTS,
 } from "@defenex/db";
+import type { Browser } from "playwright";
 import { assertUrlIsFetchable } from "@defenex/core";
 import { logger } from "../logger.js";
-import { getFetcher } from "../browser.js";
+import { withBrowser } from "../browser.js";
 import { env } from "../env.js";
 
 /**
@@ -78,7 +79,10 @@ async function checkUrl(url: string, evidenceQuote: string): Promise<Outcome> {
     return "unknown";
   }
 
-  const browser = await getFetcher().browserHandle();
+  return withBrowser(async (fetcher) => checkInBrowser(await fetcher.browserHandle(), url, evidenceQuote));
+}
+
+async function checkInBrowser(browser: Browser, url: string, evidenceQuote: string): Promise<Outcome> {
   const context = await browser.newContext({
     viewport: { width: 1280, height: 900 },
     ignoreHTTPSErrors: true,

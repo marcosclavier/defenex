@@ -9,7 +9,7 @@ import { getDb, brands } from "@defenex/db";
 import { eq } from "drizzle-orm";
 import { env } from "../env.js";
 import { logger } from "../logger.js";
-import { getFetcher } from "../browser.js";
+import { withBrowser } from "../browser.js";
 import { putObject } from "../storage/r2.js";
 import type { ReportJobData } from "../queues.js";
 
@@ -108,15 +108,16 @@ export async function processReport(job: Job<ReportJobData>): Promise<void> {
 }
 
 async function renderPdf(scanId: string, html: string): Promise<string | null> {
-  const fetcher = getFetcher();
-  const browser = await fetcher.browserHandle();
-  const context = await browser.newContext();
-  try {
-    const page = await context.newPage();
-    await page.setContent(html, { waitUntil: "domcontentloaded" });
-    const pdf = await page.pdf({ format: "A4", printBackground: true, margin: { top: "16mm", bottom: "16mm", left: "12mm", right: "12mm" } });
-    return await putObject(`reports/${scanId}.pdf`, Buffer.from(pdf), "application/pdf");
-  } finally {
-    await context.close().catch(() => {});
-  }
+  const pdf = await withBrowser(async (fetcher) => {
+    const browser = await fetcher.browserHandle();
+    const context = await browser.newContext();
+    try {
+      const page = await context.newPage();
+      await page.setContent(html, { waitUntil: "domcontentloaded" });
+      return await page.pdf({ format: "A4", printBackground: true, margin: { top: "16mm", bottom: "16mm", left: "12mm", right: "12mm" } });
+    } finally {
+      await context.close().catch(() => {});
+    }
+  });
+  return await putObject(`reports/${scanId}.pdf`, Buffer.from(pdf), "application/pdf");
 }

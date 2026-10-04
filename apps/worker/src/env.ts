@@ -130,6 +130,10 @@ const Env = z.object({
   /** How often the scheduler looks for due rescans. */
   SCHEDULE_INTERVAL_MINUTES: z.coerce.number().default(60),
   REPORT_CONCURRENCY: z.coerce.number().default(3),
+  /** Minutes with no job using the browser before it is closed to free its memory. */
+  BROWSER_IDLE_MINUTES: z.coerce.number().min(0).default(5),
+  /** Jobs served by one browser before it is relaunched, so it cannot grow without bound. */
+  BROWSER_RECYCLE_AFTER_JOBS: z.coerce.number().min(1).default(25),
 });
 
 function load() {

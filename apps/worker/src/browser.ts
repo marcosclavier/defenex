@@ -10,6 +10,69 @@ import { coreLogger, logger } from "./logger.js";
 
 let fetcher: PageFetcher | null = null;
 
+/** Jobs currently inside `withBrowser`. The browser is only closed at zero. */
+let leases = 0;
+/** Leases taken since the current browser launched; drives recycling. */
+let leasesSinceLaunch = 0;
+let idleTimer: NodeJS.Timeout | null = null;
+
+/**
+ * Runs `fn` with the shared fetcher, and closes the browser once nothing is
+ * using it.
+ *
+ * The worker is idle almost all of the time, and a resident Chromium was most
+ * of the Railway bill: it held ~2.3GB on average against ~0.6% of one vCPU, and
+ * grew from 1.5GB to 3GB over a month without a redeploy, because a long-lived
+ * browser process keeps memory its closed contexts never give back. Relaunching
+ * costs about a second, against scans that take minutes.
+ *
+ * So the browser closes after `BROWSER_IDLE_MINUTES` with no lease, and is
+ * recycled outright after `BROWSER_RECYCLE_AFTER_JOBS` leases even if the queue
+ * never drains long enough to go idle. Every use of the browser must go through
+ * here — a caller holding a `Browser` outside a lease can have it closed under it.
+ */
+export async function withBrowser<T>(fn: (fetcher: PageFetcher) => Promise<T>): Promise<T> {
+  if (idleTimer) {
+    clearTimeout(idleTimer);
+    idleTimer = null;
+  }
+  leases++;
+  leasesSinceLaunch++;
+  try {
+    return await fn(getFetcher());
+  } finally {
+    leases--;
+    if (leases === 0) releaseIdle();
+  }
+}
+
+function releaseIdle(): void {
+  if (leasesSinceLaunch >= env.BROWSER_RECYCLE_AFTER_JOBS) {
+    logger.info({ jobs: leasesSinceLaunch }, "recycling browser");
+    void recycle();
+    return;
+  }
+  idleTimer = setTimeout(() => {
+    idleTimer = null;
+    if (leases === 0) {
+      logger.info({ idleMinutes: env.BROWSER_IDLE_MINUTES }, "closing idle browser");
+      void recycle();
+    }
+  }, env.BROWSER_IDLE_MINUTES * 60_000);
+  // An idle timer must not hold the process open during shutdown.
+  idleTimer.unref();
+}
+
+/**
+ * Closes the browser but keeps the fetcher; its next fetch relaunches. A lease
+ * taken while this is closing is safe — the fetcher drops its handle before
+ * awaiting the close, so the new lease launches a fresh browser.
+ */
+async function recycle(): Promise<void> {
+  leasesSinceLaunch = 0;
+  await fetcher?.close().catch(() => {});
+}
+
 /**
  * One browser for the whole process, shared across concurrent scans.
  *
@@ -21,7 +84,7 @@ let fetcher: PageFetcher | null = null;
  * by the caller from the requester's tier — holding it on this singleton meant
  * concurrent scans drew from one shared allowance.
  */
-export function getFetcher(): PageFetcher {
+function getFetcher(): PageFetcher {
   if (!fetcher) {
     fetcher = new PageFetcher({
       logger: coreLogger,
@@ -93,6 +156,11 @@ export function getEvidenceScraper(): ScrapeProvider {
  * deploys until the container runs out of memory.
  */
 export async function closeBrowser(): Promise<void> {
+  if (idleTimer) {
+    clearTimeout(idleTimer);
+    idleTimer = null;
+  }
+  leasesSinceLaunch = 0;
   const current = fetcher;
   fetcher = null;
   if (current) {
