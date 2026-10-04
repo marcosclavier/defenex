@@ -16,7 +16,9 @@ export function Header() {
           <span aria-hidden className="h-2 w-2 bg-paper" />
           <span className="font-mono text-sm tracking-[0.2em] uppercase">Defenex</span>
         </Link>
-        <nav className="flex items-center gap-6 text-sm text-ink-dim">
+        <nav className="flex items-center gap-5 whitespace-nowrap text-sm text-ink-dim sm:gap-6">
+          {/* Four links do not fit beside the wordmark at phone width; the footer carries Blog there. */}
+          <Link href="/blog" className="hidden transition-colors hover:text-ink sm:inline">Blog</Link>
           <Link href="/pricing" className="transition-colors hover:text-ink">Pricing</Link>
           <Link href="/scan" className="transition-colors hover:text-ink">Run a scan</Link>
           <Link href="/login" className="transition-colors hover:text-ink">Sign in</Link>
@@ -34,6 +36,7 @@ export function Footer() {
           Findings describe what a page appears to do. They are not legal conclusions.
         </p>
         <nav className="flex gap-5">
+          <Link href="/blog" className="transition-colors hover:text-ink-dim">Blog</Link>
           <Link href="/privacy" className="transition-colors hover:text-ink-dim">Privacy</Link>
           <Link href="/terms" className="transition-colors hover:text-ink-dim">Terms</Link>
           <Link href="/acceptable-use" className="transition-colors hover:text-ink-dim">Acceptable use</Link>

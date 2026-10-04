@@ -5,6 +5,7 @@ DEFENEX.md
 BUILD.md
 linkedin-company-scraper.txt
 YEPAPI-SERP.txt
+CONTENT-STRATEGY.md
 
 # Secrets — must be ignored before the first commit
 .env
